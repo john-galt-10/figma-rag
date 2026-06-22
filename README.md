@@ -77,19 +77,18 @@ The current plan is to build the system in stages:
 
 ## Current milestone
 
-The first active milestone is documentation ingestion.
+Documentation ingestion and Markdown normalization are complete for the initial Figma Help Center corpus. The current milestone is producing retrieval-ready chunks and preparing them for embedding and indexing.
 
-For each collected document, the system should store:
+The chunking pipeline currently:
 
-* a stable document ID
-* title
-* source URL
-* source type
-* product area
-* fetch timestamp
-* raw file path
+* reads cleaned Markdown documents from the processed manifest
+* supports selectable chunking strategies through the CLI
+* uses heading-aware hierarchical chunking as the first strategy
+* measures chunk limits with the selected embedding model's tokenizer
+* preserves document metadata and heading paths in each chunk
+* writes versioned JSONL artifacts for reproducible experiments
 
-The raw dataset should be reproducible so the index can be rebuilt from source artifacts.
+The baseline uses `Alibaba-NLP/gte-modernbert-base`, a maximum of 600 tokens per chunk, and 60 tokens of overlap when oversized sections must be split. The next objective is to embed these chunks and build the first local retrieval index.
 
 ## Repository intent
 
