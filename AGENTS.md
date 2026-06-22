@@ -52,3 +52,4 @@ The default goal is not production scale. The goal is to build a clear, inspecta
 ## General indications
 
 - Don't create tests if not explicitly asked. Not everything needs tests.
+- Run tests only if explicitly asked.
