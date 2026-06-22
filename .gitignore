@@ -3,3 +3,4 @@ data
 __pycache__/
 *.py[cod]
 *$py.class
+scripts/generate_md_from_help_center.py
