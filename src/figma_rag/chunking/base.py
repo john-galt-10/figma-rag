@@ -24,6 +24,7 @@ class ChunkDraft:
 
     content: str
     heading_path: tuple[str, ...]
+    char_span: tuple[int, int] | None = None
 
 
 class Tokenizer(Protocol):

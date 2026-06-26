@@ -131,6 +131,7 @@ def chunk_corpus(
                         "title": metadata.title,
                         "heading_path": list(draft.heading_path),
                         "content": draft.content,
+                        "char_span": list(draft.char_span) if draft.char_span else None,
                         "text": text,
                         "token_count": token_count,
                         "source_url": metadata.source_url,
