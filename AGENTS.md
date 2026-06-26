@@ -52,5 +52,6 @@ The default goal is not production scale. The goal is to build a clear, inspecta
 ## General indications
 
 - Don't create tests if not explicitly asked. Not everything needs tests.
-- Run tests only if explicitly asked.
+- Run code (tests included) only if explicitly asked.
 - Everytime you implement a script, present in the chat how to run it and the meaning of the CLI parameters. Also write a very short summary of the functioning (e.g., input, output, underlying mechanism).
+- Comment the code you write. I want a docstring for each class and function, if not obvious or self-explanatory.
