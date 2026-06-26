@@ -90,6 +90,24 @@ The chunking pipeline currently:
 
 The baseline uses `Alibaba-NLP/gte-modernbert-base`, a maximum of 600 tokens per chunk, and 60 tokens of overlap when oversized sections must be split. The next objective is to embed these chunks and build the first local retrieval index.
 
+## Build the local vector index
+
+From the `figma-navigator` environment, build the persistent Chroma collection:
+
+```powershell
+python scripts/build_vector_index.py
+```
+
+The script reads the selected chunk JSONL, embeds each chunk's `text` field with Sentence Transformers, and upserts the vectors plus source metadata into `data/processed/figma_docs/chroma/`. By default, the collection name is derived from the chunking artifact and embedding model, for example `figma_hierarchical_gte-modernbert-base_t600_o60`, so indexing a different chunking run creates a separate collection. It expects `chromadb` and `sentence-transformers` to be available in the active environment.
+
+Query the local collection with the simple retrieval example:
+
+```powershell
+python scripts/retrieval_example.py "How do variables work in prototypes?"
+```
+
+The example uses the reusable Chroma retriever in `src/figma_rag/retrieval/`: it embeds the query with the selected Sentence Transformers model, searches the matching Chroma collection, and prints the nearest chunks with source metadata. Use `--chunks-path` and `--model` to target a specific indexed collection, `--collection-name` to override the generated collection name, and `--top-k` to choose how many chunks to return.
+
 ## Repository intent
 
 This repository is intentionally narrow in scope: it is the RAG core of the larger Figma UI assistant project.
