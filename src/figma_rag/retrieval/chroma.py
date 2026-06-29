@@ -38,8 +38,13 @@ class ChromaRetriever:
         self._model = _load_sentence_transformer(model_name)
         self._collection = _load_collection(persist_dir, collection_name)
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[RetrievalResult]:
-        """Return nearest chunks for a query."""
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+        where: dict | None = None,
+    ) -> list[RetrievalResult]:
+        """Return nearest chunks for a query, optionally filtered by metadata."""
 
         if top_k <= 0:
             raise ValueError("top_k must be greater than zero")
@@ -51,11 +56,15 @@ class ChromaRetriever:
             normalize_embeddings=True,
             show_progress_bar=False,
         )
-        results = self._collection.query(
-            query_embeddings=[query_embedding.tolist()],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+        query_args = {
+            "query_embeddings": [query_embedding.tolist()],
+            "n_results": top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            query_args["where"] = where
+
+        results = self._collection.query(**query_args)
         return _normalize_results(results)
 
 

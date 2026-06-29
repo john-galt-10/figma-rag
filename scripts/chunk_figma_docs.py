@@ -43,21 +43,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default="Alibaba-NLP/gte-modernbert-base",
-#        default="BAAI/bge-small-en-v1.5",
+        # default="Alibaba-NLP/gte-modernbert-base",
+       default="BAAI/bge-small-en-v1.5",
         help="Hugging Face model whose tokenizer defines token limits.",
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=600, # 320
-        help="Maximum tokens in final embedding text (default: 600).",
+        # default=600, # 320
+        default=320,
+        help="Maximum tokens in final embedding text (default: 320).",
     )
     parser.add_argument(
         "--overlap-tokens",
         type=int,
-        default=60, # 40
-        help="Approximate overlap for split sections (default: 60).",
+        # default=60, # 40
+        default=40,
+        help="Approximate overlap for split sections (default: 40).",
     )
     return parser
 

@@ -70,6 +70,13 @@ def load_processed_manifest(path: Path) -> list[dict]:
             records.append(record)
     return records
 
+def categorize_raw_product_area(raw_product_area):
+    """Processes raw product area strings and categorizes into higher-granularity buckets"""
+    if "figma-buzz" in raw_product_area: return "figma-buzz"
+    if "figjam" in raw_product_area: return "figjam"
+
+    return "figma-design-or-general"
+
 
 def chunk_corpus(
     manifest_path: Path,
@@ -96,6 +103,7 @@ def chunk_corpus(
             source_url=str(record["source_url"]),
             source_type=str(record["source_type"]),
             product_area=str(record["product_area"]),
+            product=categorize_raw_product_area(str(record["product_area"])),
             processed_file_path=str(record["processed_file_path"]),
         )
         try:
@@ -138,6 +146,7 @@ def chunk_corpus(
                         "source_type": metadata.source_type,
                         "product_area": metadata.product_area,
                         "processed_file_path": metadata.processed_file_path,
+                        "product": metadata.product
                     }
                 )
             output_records.extend(document_records)

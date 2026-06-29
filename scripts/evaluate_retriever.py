@@ -24,7 +24,12 @@ from figma_rag.evaluation import (  # noqa: E402
     write_detailed_results_csv,
     write_metrics_json,
 )
-from figma_rag.retrieval import ChromaRetriever  # noqa: E402
+from figma_rag.retrieval import (  # noqa: E402
+    ChromaRetriever,
+    RetrievalRequest,
+    build_retrieval_pipeline,
+    parse_metadata_filter_set,
+)
 
 DEFAULT_TEST_SET_PATH = (
     REPO_ROOT
@@ -35,6 +40,10 @@ DEFAULT_TEST_SET_PATH = (
 )
 DEFAULT_PERSIST_DIR = REPO_ROOT / "data" / "processed" / "figma_docs" / "chroma"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test" / "test_results"
+DEFAULT_METADATA_FILTERS = [
+    "token_count>30",
+    "product=figma-design-or-general",
+]
 TEST_SET_FILENAME_PATTERN = re.compile(
     r"^.+?_relevant_chunks_(?P<label>.+?)_(?P<timestamp>\d{8}-\d{4})$"
 )
@@ -61,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--collection-name",
         required=True,
+        default="hierarchical-bge-w-product"
         help="Name of the Chroma collection to query.",
     )
     parser.add_argument(
@@ -85,6 +95,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--save-details",
         action="store_true",
         help="Write one CSV row per query per k for debugging retrieval behavior.",
+    )
+    parser.add_argument(
+        "--metadata-filter",
+        action="append",
+        default=DEFAULT_METADATA_FILTERS.copy(),
+        metavar="FILTER",
+        help=(
+            "Metadata filter to apply before vector ranking. Supports =, !=, <, "
+            "<=, >, and >=. Can be repeated and filters are combined with AND. "
+            "Defaults to token_count>30 and product=figma-design-or-general. "
+            'Examples: --metadata-filter source_type=help_center --metadata-filter "token_count<80".'
+        ),
+    )
+    parser.add_argument(
+        "--disable-metadata-filters",
+        action="store_true",
+        help="Parse metadata filters but do not apply them during retrieval.",
+    )
+    parser.add_argument(
+        "--retrieval-component",
+        action="append",
+        choices=["chroma"],
+        default=None,
+        help="Retrieval component to enable. Defaults to chroma.",
     )
     parser.add_argument(
         "--seed",
@@ -114,26 +148,54 @@ def build_output_paths(
 def main() -> int:
     """Run retrieval evaluation and write comparison-friendly artifacts."""
 
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
     seed_settings = set_reproducibility_seed(args.seed)
     top_k_values = normalize_top_k_values(args.top_k)
 
+    try:
+        metadata_filters = parse_metadata_filter_set(args.metadata_filter)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    metadata_filters_enabled = not args.disable_metadata_filters
+    retrieval_components = args.retrieval_component or ["chroma"]
+
     test_set_examples = load_retrieval_test_set(args.test_set_path)
+
     retriever = ChromaRetriever(
         persist_dir=args.persist_dir,
         collection_name=args.collection_name,
         model_name=args.model,
     )
+    try:
+        pipeline = build_retrieval_pipeline(
+            component_names=retrieval_components,
+            chroma_retriever=retriever,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     max_top_k = max(top_k_values)
     retrieved_chunk_ids_by_query_id = {}
     for example in test_set_examples:
-        results = stabilize_retrieval_ties(
-            retriever.retrieve(example.query, top_k=max_top_k)
+        request = RetrievalRequest(
+            query=example.query,
+            top_k=max_top_k,
+            metadata_filters=metadata_filters,
+            metadata_filters_enabled=metadata_filters_enabled,
         )
+        results = stabilize_retrieval_ties(pipeline.retrieve(request))
         retrieved_chunk_ids_by_query_id[example.query_id] = [
             result.chunk_id for result in results
         ]
+
+    representative_request = RetrievalRequest(
+        query="metadata",
+        top_k=max_top_k,
+        metadata_filters=metadata_filters,
+        metadata_filters_enabled=metadata_filters_enabled,
+    )
 
     evaluation = evaluate_retrieval_results(
         examples=test_set_examples,
@@ -157,6 +219,11 @@ def main() -> int:
             "collection_name": args.collection_name,
             "collection": _collection_metadata(retriever),
             "model": args.model,
+            "retrieval_pipeline": pipeline.to_description(),
+            "metadata_filters": metadata_filters.to_description(
+                enabled=metadata_filters_enabled
+            ),
+            "chroma_where": representative_request.chroma_where,
             "top_k_values": top_k_values,
             "max_top_k_retrieved": max_top_k,
             "query_count": len(test_set_examples),
