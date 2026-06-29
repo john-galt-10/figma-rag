@@ -188,6 +188,8 @@ def _build_metadata(record: dict) -> dict:
         "product_area": str(record.get("product_area", "")),
         "processed_file_path": str(record.get("processed_file_path", "")),
         "token_count": int(record["token_count"]),
+        "start_idx": int(record["char_span"][0]),
+        "end_idx": int(record["char_span"][1])
     }
 
 

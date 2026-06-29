@@ -48,7 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default="Alibaba-NLP/gte-modernbert-base",
+        default="BAAI/bge-small-en-v1.5",
+#        default="Alibaba-NLP/gte-modernbert-base",
         help="Sentence Transformers model used to embed chunk text.",
     )
     parser.add_argument(
