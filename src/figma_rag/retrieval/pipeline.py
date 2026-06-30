@@ -17,14 +17,25 @@ class RetrievalRequest:
     top_k: int
     metadata_filters: MetadataFilterSet = MetadataFilterSet()
     metadata_filters_enabled: bool = True
+    raw_chroma_where: dict | None = None
 
     @property
     def chroma_where(self) -> dict | None:
         """Return the active Chroma metadata filter payload."""
 
-        if not self.metadata_filters_enabled:
+        clauses = []
+        if self.metadata_filters_enabled:
+            metadata_where = self.metadata_filters.to_chroma_where()
+            if metadata_where:
+                clauses.append(metadata_where)
+        if self.raw_chroma_where:
+            clauses.append(self.raw_chroma_where)
+
+        if not clauses:
             return None
-        return self.metadata_filters.to_chroma_where()
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"$and": clauses}
 
 
 class RetrievalComponent(Protocol):

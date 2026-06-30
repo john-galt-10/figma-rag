@@ -6,7 +6,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -42,8 +42,9 @@ DEFAULT_PERSIST_DIR = REPO_ROOT / "data" / "processed" / "figma_docs" / "chroma"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test" / "test_results"
 DEFAULT_METADATA_FILTERS = [
     "token_count>30",
-    "product=figma-design-or-general",
+    # "product=figma-design-or-general",
 ]
+DEFAULT_TOPIC_FILTER = {"topic": {"$in": ["Figma Design", "Administration", "Help", "Community", "Work across Figma", "Get Started"]}}
 TEST_SET_FILENAME_PATTERN = re.compile(
     r"^.+?_relevant_chunks_(?P<label>.+?)_(?P<timestamp>\d{8}-\d{4})$"
 )
@@ -69,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--collection-name",
-        required=True,
-        default="hierarchical-bge-w-product"
+        required=False,
+        default="hierarchical-bge-w-topic",
         help="Name of the Chroma collection to query.",
     )
     parser.add_argument(
@@ -114,6 +115,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Parse metadata filters but do not apply them during retrieval.",
     )
     parser.add_argument(
+        "--disable-topic-filter",
+        action="store_true",
+        help=(
+            "Do not restrict retrieval to the default Figma Design and "
+            "Administration topics."
+        ),
+    )
+    parser.add_argument(
         "--retrieval-component",
         action="append",
         choices=["chroma"],
@@ -129,6 +138,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# def build_output_paths(
+#     test_set_path: Path,
+#     top_k_values: list[int],
+#     output_dir: Path,
+# ) -> tuple[Path, Path]:
+#     """Build traceable output paths for aggregate and detailed artifacts."""
+
+#     test_set_label, timestamp = _artifact_label_and_timestamp(test_set_path)
+#     top_k_label = "k" + "-".join(str(top_k) for top_k in top_k_values)
+#     artifact_label = f"{test_set_label}_{top_k_label}_{timestamp}"
+#     return (
+#         output_dir / f"retrieval_metrics_{artifact_label}_{timestamp}.json",
+#         output_dir / f"retrieval_details_{artifact_label}_{timestamp}.csv",
+#     )
+
 def build_output_paths(
     test_set_path: Path,
     top_k_values: list[int],
@@ -136,13 +160,27 @@ def build_output_paths(
 ) -> tuple[Path, Path]:
     """Build traceable output paths for aggregate and detailed artifacts."""
 
-    test_set_label, timestamp = _artifact_label_and_timestamp(test_set_path)
+    test_set_label, test_set_timestamp = _artifact_label_and_timestamp(test_set_path)
+    current_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
+
     top_k_label = "k" + "-".join(str(top_k) for top_k in top_k_values)
-    artifact_label = f"{test_set_label}_{top_k_label}_{timestamp}"
+    artifact_label = f"{test_set_label}_{test_set_timestamp}_{top_k_label}"
+    
     return (
-        output_dir / f"retrieval_metrics_{artifact_label}.json",
-        output_dir / f"retrieval_details_{artifact_label}.csv",
+        output_dir / f"retrieval_metrics_{artifact_label}_{current_timestamp}.json",
+        output_dir / f"retrieval_details_{artifact_label}_{current_timestamp}.csv",
     )
+
+
+def _describe_topic_filter(topic_filter: dict, enabled: bool = True) -> dict:
+    """Return a JSON-serializable description of the default topic filter."""
+
+    return {
+        "enabled": enabled,
+        "field": "topic",
+        "operator": "in",
+        "values": topic_filter["topic"]["$in"],
+    }
 
 
 def main() -> int:
@@ -159,6 +197,7 @@ def main() -> int:
         parser.error(str(exc))
 
     metadata_filters_enabled = not args.disable_metadata_filters
+    topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
     retrieval_components = args.retrieval_component or ["chroma"]
 
     test_set_examples = load_retrieval_test_set(args.test_set_path)
@@ -178,12 +217,24 @@ def main() -> int:
 
     max_top_k = max(top_k_values)
     retrieved_chunk_ids_by_query_id = {}
+
+    print("+-----------------------------------------------------------------------+")
+    print("Evaluating Retriever performance w/ the following settings:")
+    print(f"Pipeline: {pipeline.to_description()}")
+    print(f"Metadata filters: {[fil.to_description() for fil in metadata_filters.filters]}")
+    print(
+        "Topic filter: "
+        f"{_describe_topic_filter(DEFAULT_TOPIC_FILTER, enabled=not args.disable_topic_filter)}"
+    )
+    print("+-----------------------------------------------------------------------+")
+    
     for example in test_set_examples:
         request = RetrievalRequest(
             query=example.query,
             top_k=max_top_k,
             metadata_filters=metadata_filters,
             metadata_filters_enabled=metadata_filters_enabled,
+            raw_chroma_where=topic_filter,
         )
         results = stabilize_retrieval_ties(pipeline.retrieve(request))
         retrieved_chunk_ids_by_query_id[example.query_id] = [
@@ -195,6 +246,7 @@ def main() -> int:
         top_k=max_top_k,
         metadata_filters=metadata_filters,
         metadata_filters_enabled=metadata_filters_enabled,
+        raw_chroma_where=topic_filter,
     )
 
     evaluation = evaluate_retrieval_results(
@@ -222,6 +274,10 @@ def main() -> int:
             "retrieval_pipeline": pipeline.to_description(),
             "metadata_filters": metadata_filters.to_description(
                 enabled=metadata_filters_enabled
+            ),
+            "topic_filter": _describe_topic_filter(
+                DEFAULT_TOPIC_FILTER,
+                enabled=not args.disable_topic_filter,
             ),
             "chroma_where": representative_request.chroma_where,
             "top_k_values": top_k_values,

@@ -79,7 +79,8 @@ def build_default_output_path(
         f"chunks_{strategy}_{model_slug}_t{max_tokens}_o{overlap_tokens}_"
         f"{timestamp}.jsonl"
     )
-    return REPO_ROOT / "data" / "processed" / "figma_docs" / filename
+    # return REPO_ROOT / "data" / "processed" / "figma_docs" / filename
+    return REPO_ROOT / "data" / "processed_w_breadcrumbs" / "figma_docs" / filename
 
 
 def main() -> int:

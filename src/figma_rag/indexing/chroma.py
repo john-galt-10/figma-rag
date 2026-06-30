@@ -187,6 +187,7 @@ def _build_metadata(record: dict) -> dict:
         "source_type": str(record.get("source_type", "")),
         "product_area": str(record.get("product_area", "")),
         "product": str(record.get("product", "N.A.")),
+        "topic": str(record.get("topic", "N.A.")),
         "processed_file_path": str(record.get("processed_file_path", "")),
         "token_count": int(record["token_count"]),
         "start_idx": int(record["char_span"][0]),

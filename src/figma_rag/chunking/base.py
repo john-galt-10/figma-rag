@@ -15,7 +15,7 @@ class DocumentMetadata:
     source_url: str
     source_type: str
     product_area: str
-    product: str
+    topic: str
     processed_file_path: str
 
 

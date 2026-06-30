@@ -11,7 +11,13 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from figma_rag.retrieval import ChromaRetriever, resolve_collection_name
+from figma_rag.retrieval import (
+    ChromaRetriever,
+    RetrievalRequest,
+    build_retrieval_pipeline,
+    parse_metadata_filter_set,
+    resolve_collection_name,
+)
 
 DEFAULT_CHUNKS_PATH = (
     REPO_ROOT
@@ -20,6 +26,11 @@ DEFAULT_CHUNKS_PATH = (
     / "figma_docs"
     / "chunks_hierarchical_gte-modernbert-base_t600_o60_20260622-1836.jsonl"
 )
+DEFAULT_METADATA_FILTERS = [
+    "token_count>30",
+    # "product=figma-design-or-general",
+]
+DEFAULT_TOPIC_FILTER = {"topic": {"$in": ["Figma Design", "Administration", "Help", "Community", "Work across Figma", "Get Started"]}}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--collection-name",
-        default=None,
+        default="hierarchical-bge-w-product",
         help=(
             "Name of the Chroma collection to query. By default, a name is built "
             "from the chunking artifact and embedding model."
@@ -65,13 +76,66 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Number of nearest chunks to return.",
     )
+    parser.add_argument(
+        "--metadata-filter",
+        action="append",
+        default=DEFAULT_METADATA_FILTERS.copy(),
+        metavar="FILTER",
+        help=(
+            "Metadata filter to apply before vector ranking. Supports =, !=, <, "
+            "<=, >, and >=. Can be repeated and filters are combined with AND. "
+            "Defaults to token_count>30 and product=figma-design-or-general. "
+            'Examples: --metadata-filter source_type=help_center --metadata-filter "token_count<80".'
+        ),
+    )
+    parser.add_argument(
+        "--disable-metadata-filters",
+        action="store_true",
+        help="Parse metadata filters but do not apply them during retrieval.",
+    )
+    parser.add_argument(
+        "--disable-topic-filter",
+        action="store_true",
+        help=(
+            "Do not restrict retrieval to the default Figma Design and "
+            "Administration topics."
+        ),
+    )
+    parser.add_argument(
+        "--retrieval-component",
+        action="append",
+        choices=["chroma"],
+        default=None,
+        help="Retrieval component to enable. Defaults to chroma.",
+    )
     return parser
 
 
+def _describe_topic_filter(topic_filter: dict, enabled: bool = True) -> dict:
+    """Return a JSON-serializable description of the default topic filter."""
+
+    return {
+        "enabled": enabled,
+        "field": "topic",
+        "operator": "in",
+        "values": topic_filter["topic"]["$in"],
+    }
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
     if args.top_k <= 0:
         raise ValueError("--top-k must be greater than zero")
+
+    try:
+        metadata_filters = parse_metadata_filter_set(args.metadata_filter)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    metadata_filters_enabled = not args.disable_metadata_filters
+    topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
+    retrieval_components = args.retrieval_component or ["chroma"]
 
     collection_name = resolve_collection_name(
         chunks_path=args.chunks_path,
@@ -82,6 +146,12 @@ def main() -> int:
     print(f"Query: {args.query}")
     print(f"Collection: {collection_name}")
     print(f"Embedding model: {args.model}")
+    print(f"Pipeline: {', '.join(retrieval_components)}")
+    print(f"Metadata filters: {metadata_filters.to_description(metadata_filters_enabled)}")
+    print(
+        "Topic filter: "
+        f"{_describe_topic_filter(DEFAULT_TOPIC_FILTER, enabled=not args.disable_topic_filter)}"
+    )
     print()
 
     retriever = ChromaRetriever(
@@ -89,7 +159,23 @@ def main() -> int:
         collection_name=collection_name,
         model_name=args.model,
     )
-    results = retriever.retrieve(args.query, top_k=args.top_k)
+    try:
+        pipeline = build_retrieval_pipeline(
+            component_names=retrieval_components,
+            chroma_retriever=retriever,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    results = pipeline.retrieve(
+        RetrievalRequest(
+            query=args.query,
+            top_k=args.top_k,
+            metadata_filters=metadata_filters,
+            metadata_filters_enabled=metadata_filters_enabled,
+            raw_chroma_where=topic_filter,
+        )
+    )
 
     for result in results:
         preview = " ".join(result.text.split())[:500]

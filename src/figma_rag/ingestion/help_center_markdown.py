@@ -10,6 +10,7 @@ from typing import Iterable
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, NavigableString, Tag
+from tqdm.auto import tqdm
 
 MAIN_CONTENT_SELECTORS = (
     ".article-body",
@@ -144,6 +145,33 @@ def is_low_value_text(text: str) -> bool:
 
     normalized = normalize_whitespace(text).casefold()
     return not normalized or len(normalized) < 3 or normalized in LOW_VALUE_EXACT
+
+
+def extract_subnav_breadcrumbs(html: str) -> list[str]:
+    """Extract breadcrumb labels from the Help Center sub-nav component."""
+
+    soup = BeautifulSoup(html, "html.parser")
+    nav = soup.select_one("nav.sub-nav")
+    if nav is None:
+        return []
+
+    breadcrumb_list = nav.select_one("ol.breadcrumbs")
+    if breadcrumb_list is None:
+        return []
+
+    breadcrumbs = [
+        normalize_whitespace(item.get_text(" ", strip=True))
+        for item in breadcrumb_list.select("li")
+    ]
+    return [breadcrumb for breadcrumb in breadcrumbs if breadcrumb]
+
+
+def extract_topic(breadcrumbs: list[str]) -> str:
+    """Return the second breadcrumb level used for topic filtering."""
+
+    if len(breadcrumbs) < 2:
+        return ""
+    return breadcrumbs[1]
 
 
 def load_manifest_records(manifest_path: Path) -> list[ManifestRecord]:
@@ -467,7 +495,11 @@ def blocks_to_markdown(blocks: Iterable[ContentBlock]) -> str:
     return "\n\n".join(block.markdown for block in blocks if block.markdown).strip() + "\n"
 
 
-def render_markdown_document(record: ManifestRecord, blocks: Iterable[ContentBlock]) -> str:
+def render_markdown_document(
+    record: ManifestRecord,
+    blocks: Iterable[ContentBlock],
+    breadcrumbs: list[str],
+) -> str:
     """Add source metadata as YAML-compatible front matter to a Markdown body."""
 
     metadata = {
@@ -476,6 +508,8 @@ def render_markdown_document(record: ManifestRecord, blocks: Iterable[ContentBlo
         "source_url": record.source_url,
         "source_type": record.source_type,
         "product_area": record.product_area,
+        "topic": extract_topic(breadcrumbs),
+        "breadcrumbs": breadcrumbs,
     }
     front_matter = ["---"]
     front_matter.extend(
@@ -497,21 +531,26 @@ def convert_help_center_document(
     record: ManifestRecord,
     output_dir: Path,
     repository_root: Path,
-) -> Path:
+) -> tuple[Path, list[str]]:
     """Convert and write one raw Help Center document."""
 
     raw_file_path = resolve_raw_file_path(record, repository_root)
     html = raw_file_path.read_text(encoding="utf-8")
+    breadcrumbs = extract_subnav_breadcrumbs(html)
     blocks = html_to_blocks(html, record.source_url)
-    markdown = render_markdown_document(record, blocks)
+    markdown = render_markdown_document(record, blocks, breadcrumbs)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{record.document_id}.md"
     output_path.write_text(markdown, encoding="utf-8")
-    return output_path
+    return output_path, breadcrumbs
 
 
-def build_processed_manifest_record(record: ManifestRecord, output_path: Path) -> dict:
+def build_processed_manifest_record(
+    record: ManifestRecord,
+    output_path: Path,
+    breadcrumbs: list[str],
+) -> dict:
     """Build the processed JSONL metadata for one successful conversion."""
 
     payload = {
@@ -520,6 +559,7 @@ def build_processed_manifest_record(record: ManifestRecord, output_path: Path) -
         "source_url": record.source_url,
         "source_type": record.source_type,
         "product_area": record.product_area,
+        "topic": extract_topic(breadcrumbs),
         "raw_file_path": record.raw_file_path.as_posix(),
         "processed_file_path": output_path.as_posix(),
     }
@@ -550,14 +590,16 @@ def convert_help_center_corpus(
     processed_records: list[dict] = []
     failures: list[ConversionFailure] = []
 
-    for record in records:
+    for record in tqdm(records, desc="Converting Help Center documents", unit="doc"):
         try:
-            output_path = convert_help_center_document(
+            output_path, breadcrumbs = convert_help_center_document(
                 record=record,
                 output_dir=output_dir,
                 repository_root=repository_root,
             )
-            processed_records.append(build_processed_manifest_record(record, output_path))
+            processed_records.append(
+                build_processed_manifest_record(record, output_path, breadcrumbs)
+            )
         except Exception as exc:
             failures.append(
                 ConversionFailure(
