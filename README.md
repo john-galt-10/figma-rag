@@ -77,18 +77,32 @@ The current plan is to build the system in stages:
 
 ## Current milestone
 
-Documentation ingestion and Markdown normalization are complete for the initial Figma Help Center corpus. The current milestone is producing retrieval-ready chunks and preparing them for embedding and indexing.
+The current baseline covers the full local retrieval loop for the initial Figma Help Center corpus: ingestion, Markdown normalization, hierarchical chunking, Chroma indexing, semantic retrieval, chunk-level label mapping, and retrieval evaluation.
 
-The chunking pipeline currently:
+The retrieval pipeline currently:
 
 * reads cleaned Markdown documents from the processed manifest
-* supports selectable chunking strategies through the CLI
-* uses heading-aware hierarchical chunking as the first strategy
-* measures chunk limits with the selected embedding model's tokenizer
+* chunks documents with the heading-aware hierarchical strategy
+* measures chunk limits with the selected Sentence Transformers tokenizer
 * preserves document metadata and heading paths in each chunk
 * writes versioned JSONL artifacts for reproducible experiments
+* embeds chunk text with `BAAI/bge-small-en-v1.5`
+* stores vectors and source metadata in local persistent Chroma collections
+* retrieves through the reusable pipeline in `src/figma_rag/retrieval/`
+* supports metadata filtering, currently including `token_count > 30`
+* applies the default topic filter for relevant Figma Help Center areas
 
-The baseline uses `Alibaba-NLP/gte-modernbert-base`, a maximum of 600 tokens per chunk, and 60 tokens of overlap when oversized sections must be split. The next objective is to embed these chunks and build the first local retrieval index.
+The evaluation pipeline maps document-level answer spans onto chunk IDs with `scripts/map_relevant_chunks.py`, then compares retrieved chunk IDs against those labels with `scripts/evaluate_retriever.py`. The latest saved retrieval run uses 20 manually annotated queries against the `hierarchical-bge-w-topic` collection:
+
+* source artifact: `data/eval/retrieval_test/test_results/retrieval_metrics_hierarchical_bge-small-en-v1.5_20260629-1709_k1-3-5-9-15-20_20260701T1558.json`
+* Hit@1: `0.40`
+* Hit@5: `0.75`
+* Hit@9: `0.85`
+* Hit@15 and Hit@20: `0.90`
+* Recall@5: `0.595`
+* Recall@15 and Recall@20: `0.807`
+
+See `docs/data_pipeline_and_evaluation.md` for the full command-level pipeline and artifact alignment checklist.
 
 ## Build the local vector index
 
@@ -98,7 +112,7 @@ From the `figma-navigator` environment, build the persistent Chroma collection:
 python scripts/build_vector_index.py
 ```
 
-The script reads the selected chunk JSONL, embeds each chunk's `text` field with Sentence Transformers, and upserts the vectors plus source metadata into `data/processed/figma_docs/chroma/`. By default, the collection name is derived from the chunking artifact and embedding model, for example `figma_hierarchical_gte-modernbert-base_t600_o60`, so indexing a different chunking run creates a separate collection. It expects `chromadb` and `sentence-transformers` to be available in the active environment.
+The script reads the selected chunk JSONL, embeds each chunk's `text` field with Sentence Transformers, and upserts the vectors plus source metadata into `data/processed/figma_docs/chroma/`. By default, the collection name is derived from the chunking artifact and embedding model, so indexing a different chunking run creates a separate collection. It expects `chromadb` and `sentence-transformers` to be available in the active environment.
 
 Query the local collection with the simple retrieval example:
 
