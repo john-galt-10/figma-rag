@@ -84,7 +84,7 @@ def build_chroma_index(
             ids=[str(record["chunk_id"]) for record in batch],
             documents=texts,
             embeddings=embeddings.tolist(),
-            metadatas=[_build_metadata(record) for record in batch],
+            metadatas=[build_chunk_metadata(record) for record in batch],
         )
         inserted_vectors += len(batch)
 
@@ -175,7 +175,9 @@ def _trim_collection_name(collection_name: str) -> str:
     return trimmed or "figma_index"
 
 
-def _build_metadata(record: dict) -> dict:
+def build_chunk_metadata(record: dict) -> dict:
+    """Build the shared retrieval metadata payload for one chunk record."""
+
     return {
         "chunk_id": str(record["chunk_id"]),
         "document_id": str(record["document_id"]),

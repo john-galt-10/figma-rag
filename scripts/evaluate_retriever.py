@@ -36,7 +36,7 @@ DEFAULT_TEST_SET_PATH = (
     / "data"
     / "eval"
     / "retrieval_test"
-    / "golden_set_relevant_chunks_hierarchical_bge-small-en-v1.5_20260626-1212.jsonl"
+    / "golden_set_manual_2_complete_20260701_1753_relevant_chunks_hierarchical_bge-small-en-v1.5_20260629-1709.jsonl"
 )
 DEFAULT_PERSIST_DIR = REPO_ROOT / "data" / "processed" / "figma_docs" / "chroma"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test" / "test_results"
@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--top-k",
         type=int,
         nargs="+",
-        default=[1, 3, 5, 10],
+        default=[1, 3, 5, 9, 15, 20],
         help="One or more retrieval cutoffs to evaluate, such as --top-k 1 3 5 10.",
     )
     parser.add_argument(
@@ -137,21 +137,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
-
-# def build_output_paths(
-#     test_set_path: Path,
-#     top_k_values: list[int],
-#     output_dir: Path,
-# ) -> tuple[Path, Path]:
-#     """Build traceable output paths for aggregate and detailed artifacts."""
-
-#     test_set_label, timestamp = _artifact_label_and_timestamp(test_set_path)
-#     top_k_label = "k" + "-".join(str(top_k) for top_k in top_k_values)
-#     artifact_label = f"{test_set_label}_{top_k_label}_{timestamp}"
-#     return (
-#         output_dir / f"retrieval_metrics_{artifact_label}_{timestamp}.json",
-#         output_dir / f"retrieval_details_{artifact_label}_{timestamp}.csv",
-#     )
 
 def build_output_paths(
     test_set_path: Path,

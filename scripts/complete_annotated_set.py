@@ -1,8 +1,13 @@
 import pandas as pd
 import argparse
+from datetime import datetime
 from pathlib import Path
 
+DEFAULT_EVAL_DIR = Path(r"C:\Users\samue\git\figma-rag\data\eval")
+
+
 def build_parser() -> argparse.ArgumentParser:
+    """Create the command-line parser for completing an annotated set."""
     parser = argparse.ArgumentParser(
         description="Download raw Figma Help Center HTML and append manifest records."
     )
@@ -23,18 +28,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-set-path",
         type=Path,
-        default=r"C:\Users\samue\git\figma-rag\data\eval\golden_set.json",
-        help="Annotated set with automatically inferred fields.",
+        default=None,
+        help=(
+            "Annotated set with automatically inferred fields. When omitted, "
+            "the output is written to data/eval with the input filename, "
+            "'complete', and the current timestamp up to minutes."
+        ),
     )
 
     return parser
 
 
+def build_default_output_set_path(annotated_set_path: Path) -> Path:
+    """Build a timestamped default output path in the evaluation data folder."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    output_name = f"{annotated_set_path.stem}_complete_{timestamp}{annotated_set_path.suffix}"
+    return DEFAULT_EVAL_DIR / output_name
+
+
 parser = build_parser()
 args = parser.parse_args()
+annotated_set_path = Path(args.annotated_set_path)
+ref_manifest_path = Path(args.ref_manifest_path)
+output_set_path = args.output_set_path or build_default_output_set_path(annotated_set_path)
 
-annotated_set = pd.read_json(args.annotated_set_path, lines=True)
-ref_manifest = pd.read_json(args.ref_manifest_path, lines=True)
+annotated_set = pd.read_json(annotated_set_path, lines=True)
+ref_manifest = pd.read_json(ref_manifest_path, lines=True)
 
 new_objects = []
 for idx, row in annotated_set.iterrows():
@@ -55,8 +74,10 @@ for idx, row in annotated_set.iterrows():
         x = processed_md_text.find(relevant_span)
         span = (x, x + len(relevant_span))
 
-        if (x == -1): raise Exception(f"Something has gone wrong with index {idx}\n{relevant_span}")
-
+        if x == -1:
+            raise Exception(
+                f"Something has gone wrong with index {idx}\n{repr(relevant_span)}"
+            )
         new_targets.append({
             "document_id": document_id,
             "document_path": processed_md_path,
@@ -74,5 +95,4 @@ for idx, row in annotated_set.iterrows():
         "expected_answer_points": row["expected_answer_points"]
     })
 
-
-pd.DataFrame(new_objects).to_json(args.output_set_path, orient='records', lines=True)
+pd.DataFrame(new_objects).to_json(output_set_path, orient='records', lines=True)
