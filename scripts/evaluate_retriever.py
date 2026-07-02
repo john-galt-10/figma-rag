@@ -21,7 +21,7 @@ from figma_rag.evaluation import (  # noqa: E402
     set_reproducibility_seed,
     sha256_file,
     stabilize_retrieval_ties,
-    write_detailed_results_csv,
+    write_detailed_results_parquet,
     write_metrics_json,
 )
 from figma_rag.retrieval import (  # noqa: E402
@@ -29,6 +29,7 @@ from figma_rag.retrieval import (  # noqa: E402
     ChromaRetriever,
     DEFAULT_RETRIEVAL_COMPONENTS,
     RetrievalRequest,
+    available_aggregation_strategies,
     build_retrieval_pipeline,
     parse_metadata_filter_set,
 )
@@ -110,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save-details",
         action="store_true",
-        help="Write one CSV row per query per k for debugging retrieval behavior.",
+        help="Write detailed per-query results as a Parquet file.",
     )
     parser.add_argument(
         "--metadata-filter",
@@ -144,7 +145,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Retrieval component to enable. Can be repeated. Defaults to chroma "
-            "and bm25 together, which currently raises the hybrid TODO error."
+            "and bm25 together."
+        ),
+    )
+    parser.add_argument(
+        "--aggregation-strategy",
+        choices=available_aggregation_strategies(),
+        default="weighted_rrf",
+        help=(
+            "Strategy used to combine multiple retrieval components. "
+            "Defaults to weighted_rrf."
         ),
     )
     parser.add_argument(
@@ -171,7 +181,7 @@ def build_output_paths(
     
     return (
         output_dir / f"retrieval_metrics_{artifact_label}_{current_timestamp}.json",
-        output_dir / f"retrieval_details_{artifact_label}_{current_timestamp}.csv",
+        output_dir / f"retrieval_details_{artifact_label}_{current_timestamp}.parquet",
     )
 
 
@@ -220,12 +230,14 @@ def main() -> int:
             component_names=retrieval_components,
             chroma_retriever=chroma_retriever,
             bm25_retriever=bm25_retriever,
+            aggregation_strategy_name=args.aggregation_strategy,
         )
     except ValueError as exc:
         parser.error(str(exc))
 
     max_top_k = max(top_k_values)
     retrieved_chunk_ids_by_query_id = {}
+    retrieved_component_ranks_by_query_id = {}
 
     print("+-----------------------------------------------------------------------+")
     print("Evaluating Retriever performance w/ the following settings:")
@@ -245,13 +257,13 @@ def main() -> int:
             metadata_filters_enabled=metadata_filters_enabled,
             raw_chroma_where=topic_filter,
         )
-        try:
-            results = stabilize_retrieval_ties(pipeline.retrieve(request))
-        except NotImplementedError as exc:
-            parser.error(str(exc))
+        results = stabilize_retrieval_ties(pipeline.retrieve(request))
         retrieved_chunk_ids_by_query_id[example.query_id] = [
             result.chunk_id for result in results
         ]
+        retrieved_component_ranks_by_query_id[example.query_id] = (
+            _component_rank_details(results, pipeline.component_names)
+        )
 
     representative_request = RetrievalRequest(
         query="metadata",
@@ -264,6 +276,7 @@ def main() -> int:
     evaluation = evaluate_retrieval_results(
         examples=test_set_examples,
         retrieved_chunk_ids_by_query_id=retrieved_chunk_ids_by_query_id,
+        retrieved_component_ranks_by_query_id=retrieved_component_ranks_by_query_id,
         top_k_values=top_k_values,
     )
     metrics_path, details_path = build_output_paths(
@@ -313,7 +326,7 @@ def main() -> int:
     print(f"Wrote aggregate metrics to {metrics_path}")
 
     if args.save_details:
-        write_detailed_results_csv(details_path, evaluation.details)
+        write_detailed_results_parquet(details_path, evaluation.details)
         print(f"Wrote detailed per-query results to {details_path}")
 
     print(json.dumps(evaluation.metrics_by_k, indent=2))
@@ -337,6 +350,35 @@ def _slugify(value: str) -> str:
 
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-_").lower()
     return slug or "test-set"
+
+
+def _component_rank_details(results: list, component_names: list[str]) -> list[dict]:
+    """Build Parquet-friendly per-component rank details for retrieved chunks."""
+
+    details = []
+    for result in results:
+        ranks = result.metadata.get("retrieval_component_ranks")
+        distances = result.metadata.get("retrieval_component_distances")
+        if not isinstance(ranks, dict):
+            ranks = (
+                {component_names[0]: result.rank}
+                if len(component_names) == 1
+                else {}
+            )
+        if not isinstance(distances, dict):
+            distances = (
+                {component_names[0]: result.distance}
+                if len(component_names) == 1
+                else {}
+            )
+        details.append(
+            {
+                "chunk_id": result.chunk_id,
+                "ranks": ranks,
+                "distances": distances,
+            }
+        )
+    return details
 
 
 def _collection_metadata(retriever: ChromaRetriever) -> dict:

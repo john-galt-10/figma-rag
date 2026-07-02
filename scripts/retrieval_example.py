@@ -16,6 +16,7 @@ from figma_rag.retrieval import (
     ChromaRetriever,
     DEFAULT_RETRIEVAL_COMPONENTS,
     RetrievalRequest,
+    available_aggregation_strategies,
     build_retrieval_pipeline,
     parse_metadata_filter_set,
     resolve_collection_name,
@@ -123,7 +124,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Retrieval component to enable. Can be repeated. Defaults to chroma "
-            "and bm25 together, which currently raises the hybrid TODO error."
+            "and bm25 together."
+        ),
+    )
+    parser.add_argument(
+        "--aggregation-strategy",
+        choices=available_aggregation_strategies(),
+        default="weighted_rrf",
+        help=(
+            "Strategy used to combine multiple retrieval components. "
+            "Defaults to weighted_rrf."
         ),
     )
     return parser
@@ -170,6 +180,7 @@ def main() -> int:
     if "bm25" in retrieval_components:
         print(f"BM25 index directory: {args.bm25_index_dir.as_posix()}")
     print(f"Pipeline: {', '.join(retrieval_components)}")
+    print(f"Aggregation strategy: {args.aggregation_strategy}")
     print(f"Metadata filters: {metadata_filters.to_description(metadata_filters_enabled)}")
     print(
         "Topic filter: "
@@ -192,22 +203,20 @@ def main() -> int:
             component_names=retrieval_components,
             chroma_retriever=chroma_retriever,
             bm25_retriever=bm25_retriever,
+            aggregation_strategy_name=args.aggregation_strategy,
         )
     except ValueError as exc:
         parser.error(str(exc))
 
-    try:
-        results = pipeline.retrieve(
-            RetrievalRequest(
-                query=args.query,
-                top_k=args.top_k,
-                metadata_filters=metadata_filters,
-                metadata_filters_enabled=metadata_filters_enabled,
-                raw_chroma_where=topic_filter,
-            )
+    results = pipeline.retrieve(
+        RetrievalRequest(
+            query=args.query,
+            top_k=args.top_k,
+            metadata_filters=metadata_filters,
+            metadata_filters_enabled=metadata_filters_enabled,
+            raw_chroma_where=topic_filter,
         )
-    except NotImplementedError as exc:
-        parser.error(str(exc))
+    )
 
     for result in results:
         preview = " ".join(result.text.split())[:500]

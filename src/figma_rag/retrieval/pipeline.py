@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from .aggregation import (
+    DEFAULT_AGGREGATION_STRATEGY,
+    AggregationStrategy,
+    ComponentRetrievalResults,
+    get_aggregation_strategy,
+)
 from .bm25 import BM25Retriever
 from .chroma import ChromaRetriever, RetrievalResult
 from .filters import MetadataFilterSet
@@ -97,10 +103,19 @@ class BM25RetrievalComponent:
 class RetrievalPipeline:
     """Run enabled retrieval components for one request."""
 
-    def __init__(self, components: list[RetrievalComponent]) -> None:
+    def __init__(
+        self,
+        components: list[RetrievalComponent],
+        aggregation_strategy: AggregationStrategy | None = None,
+        component_weights: dict[str, float] | None = None,
+    ) -> None:
         if not components:
             raise ValueError("at least one retrieval component is required")
         self.components = components
+        self.aggregation_strategy = aggregation_strategy or get_aggregation_strategy(
+            DEFAULT_AGGREGATION_STRATEGY
+        )
+        self.component_weights = dict(component_weights or {})
 
     @property
     def component_names(self) -> list[str]:
@@ -113,7 +128,17 @@ class RetrievalPipeline:
 
         if len(self.components) == 1:
             return self.components[0].retrieve(request)
-        return aggregate_retrieval_results([], self.component_names)
+
+        component_results = [
+            component.retrieve(request) for component in self.components
+        ]
+        return aggregate_retrieval_results(
+            component_results=component_results,
+            component_names=self.component_names,
+            top_k=request.top_k,
+            aggregation_strategy=self.aggregation_strategy,
+            component_weights=self.component_weights,
+        )
 
     def to_description(self) -> dict:
         """Return a JSON-serializable description of the pipeline."""
@@ -122,20 +147,48 @@ class RetrievalPipeline:
             "components": self.component_names,
             "combination": "single_component"
             if len(self.components) == 1
-            else "hybrid_placeholder",
+            else "hybrid",
+            "aggregation_strategy": self.aggregation_strategy.name,
+            "component_weights": {
+                component_name: self.component_weights.get(component_name, 1.0)
+                for component_name in self.component_names
+            }
+            if len(self.components) > 1
+            else None,
         }
 
 
 def aggregate_retrieval_results(
     component_results: list[list[RetrievalResult]],
     component_names: list[str],
+    top_k: int | None = None,
+    aggregation_strategy: AggregationStrategy | None = None,
+    component_weights: dict[str, float] | None = None,
 ) -> list[RetrievalResult]:
     """Combine results from multiple retrieval components."""
 
-    # TODO: Implement hybrid result aggregation and score normalization.
-    raise NotImplementedError(
-        "Hybrid retrieval aggregation is not implemented yet for components: "
-        + ", ".join(component_names)
+    if len(component_results) != len(component_names):
+        raise ValueError("component_results and component_names must have same length")
+
+    strategy = aggregation_strategy or get_aggregation_strategy(
+        DEFAULT_AGGREGATION_STRATEGY
+    )
+    weights = dict(component_weights or {})
+    if top_k is None:
+        top_k = max((len(results) for results in component_results), default=0)
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero")
+
+    return strategy.aggregate(
+        component_results=[
+            ComponentRetrievalResults(
+                component_name=component_name,
+                results=results,
+                weight=weights.get(component_name, 1.0),
+            )
+            for component_name, results in zip(component_names, component_results)
+        ],
+        top_k=top_k,
     )
 
 
@@ -143,10 +196,13 @@ def build_retrieval_pipeline(
     component_names: list[str] | None = None,
     chroma_retriever: ChromaRetriever | None = None,
     bm25_retriever: BM25Retriever | None = None,
+    aggregation_strategy_name: str = DEFAULT_AGGREGATION_STRATEGY,
+    component_weights: dict[str, float] | None = None,
 ) -> RetrievalPipeline:
     """Build a retrieval pipeline from enabled component names."""
 
     component_names = list(component_names or DEFAULT_RETRIEVAL_COMPONENTS)
+    aggregation_strategy = get_aggregation_strategy(aggregation_strategy_name)
     components = []
     seen_names = set()
     for component_name in component_names:
@@ -168,4 +224,8 @@ def build_retrieval_pipeline(
 
         raise ValueError(f"Unsupported retrieval component: {component_name}")
 
-    return RetrievalPipeline(components=components)
+    return RetrievalPipeline(
+        components=components,
+        aggregation_strategy=aggregation_strategy,
+        component_weights=component_weights,
+    )

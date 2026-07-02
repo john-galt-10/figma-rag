@@ -9,7 +9,7 @@ from .retrieval import (
     set_reproducibility_seed,
     sha256_file,
     stabilize_retrieval_ties,
-    write_detailed_results_csv,
+    write_detailed_results_parquet,
     write_metrics_json,
 )
 
@@ -22,6 +22,6 @@ __all__ = [
     "set_reproducibility_seed",
     "sha256_file",
     "stabilize_retrieval_ties",
-    "write_detailed_results_csv",
+    "write_detailed_results_parquet",
     "write_metrics_json",
 ]

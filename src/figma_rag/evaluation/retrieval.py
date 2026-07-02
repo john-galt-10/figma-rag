@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import json
 import math
@@ -57,6 +56,9 @@ def evaluate_retrieval_results(
     examples: Iterable[RetrievalQueryExample],
     retrieved_chunk_ids_by_query_id: dict[str, list[str]],
     top_k_values: Iterable[int],
+    retrieved_component_ranks_by_query_id: (
+        dict[str, list[dict[str, Any]]] | None
+    ) = None,
 ) -> RetrievalEvaluation:
     """Compute retrieval metrics for every requested cutoff."""
 
@@ -66,12 +68,19 @@ def evaluate_retrieval_results(
     rows_by_k: dict[int, list[dict[str, Any]]] = {
         top_k: [] for top_k in normalized_top_k_values
     }
+    retrieved_component_ranks_by_query_id = (
+        retrieved_component_ranks_by_query_id or {}
+    )
 
     for example in examples:
         for top_k in normalized_top_k_values:
             row = evaluate_query_at_k(
                 example=example,
                 retrieved_chunk_ids=retrieved_chunk_ids_by_query_id.get(
+                    example.query_id,
+                    [],
+                ),
+                retrieved_component_ranks=retrieved_component_ranks_by_query_id.get(
                     example.query_id,
                     [],
                 ),
@@ -92,11 +101,13 @@ def evaluate_query_at_k(
     example: RetrievalQueryExample,
     retrieved_chunk_ids: list[str],
     top_k: int,
+    retrieved_component_ranks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compute per-query retrieval metrics at one cutoff."""
 
     relevant_ids = set(example.relevant_chunk_ids)
     retrieved_at_k = retrieved_chunk_ids[:top_k]
+    retrieved_component_ranks_at_k = (retrieved_component_ranks or [])[:top_k]
     relevant_retrieved_flags = [
         chunk_id in relevant_ids for chunk_id in retrieved_at_k
     ]
@@ -109,6 +120,7 @@ def evaluate_query_at_k(
         "k": top_k,
         "num_relevant": len(relevant_ids),
         "retrieved_chunk_ids": retrieved_at_k,
+        "retrieved_component_ranks": retrieved_component_ranks_at_k,
         "relevant_chunk_ids": list(example.relevant_chunk_ids),
         "hit": first_relevant_rank is not None,
         "first_relevant_rank": first_relevant_rank,
@@ -267,40 +279,20 @@ def write_metrics_json(path: Path, payload: dict[str, Any]) -> None:
         file.write("\n")
 
 
-def write_detailed_results_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    """Write per-query retrieval results as a pandas-readable CSV file."""
+def write_detailed_results_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Write per-query retrieval results as a nested Parquet file."""
 
-    fieldnames = [
-        "query_id",
-        "query",
-        "k",
-        "num_relevant",
-        "retrieved_chunk_ids",
-        "relevant_chunk_ids",
-        "hit",
-        "first_relevant_rank",
-        "reciprocal_rank",
-        "precision_at_k",
-        "recall_at_k",
-        "average_precision_at_k",
-        "ndcg_at_k",
-    ]
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError(
+            "The 'pyarrow' package is required to write detailed Parquet results."
+        ) from exc
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            csv_row = dict(row)
-            csv_row["retrieved_chunk_ids"] = json.dumps(
-                csv_row["retrieved_chunk_ids"],
-                ensure_ascii=False,
-            )
-            csv_row["relevant_chunk_ids"] = json.dumps(
-                csv_row["relevant_chunk_ids"],
-                ensure_ascii=False,
-            )
-            writer.writerow(csv_row)
+    table = pa.Table.from_pylist(rows)
+    pq.write_table(table, path)
 
 
 def _parse_test_set_row(

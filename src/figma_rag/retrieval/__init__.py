@@ -1,5 +1,14 @@
 """Retrieval utilities for local Figma documentation indexes."""
 
+from .aggregation import (
+    DEFAULT_AGGREGATION_STRATEGY,
+    AggregationStrategy,
+    ComponentRetrievalResults,
+    WeightedReciprocalRankFusionStrategy,
+    UnionAggregationStrategy,
+    available_aggregation_strategies,
+    get_aggregation_strategy,
+)
 from .bm25 import BM25Retriever
 from .chroma import ChromaRetriever, RetrievalResult, resolve_collection_name
 from .filters import MetadataFilter, MetadataFilterSet, parse_metadata_filter_set
@@ -19,6 +28,9 @@ __all__ = [
     "BM25Retriever",
     "ChromaRetrievalComponent",
     "ChromaRetriever",
+    "AggregationStrategy",
+    "ComponentRetrievalResults",
+    "DEFAULT_AGGREGATION_STRATEGY",
     "DEFAULT_RETRIEVAL_COMPONENTS",
     "MetadataFilter",
     "MetadataFilterSet",
@@ -26,8 +38,12 @@ __all__ = [
     "RetrievalPipeline",
     "RetrievalRequest",
     "RetrievalResult",
+    "UnionAggregationStrategy",
+    "WeightedReciprocalRankFusionStrategy",
     "aggregate_retrieval_results",
+    "available_aggregation_strategies",
     "build_retrieval_pipeline",
+    "get_aggregation_strategy",
     "parse_metadata_filter_set",
     "resolve_collection_name",
 ]
