@@ -21,6 +21,8 @@ from .pipeline import (
     RetrievalRequest,
     aggregate_retrieval_results,
     build_retrieval_pipeline,
+    normalize_component_weights,
+    parse_component_weights,
 )
 
 __all__ = [
@@ -44,6 +46,8 @@ __all__ = [
     "available_aggregation_strategies",
     "build_retrieval_pipeline",
     "get_aggregation_strategy",
+    "normalize_component_weights",
+    "parse_component_weights",
     "parse_metadata_filter_set",
     "resolve_collection_name",
 ]

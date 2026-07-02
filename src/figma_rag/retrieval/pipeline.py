@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isclose
 from typing import Protocol
 
 from .aggregation import (
@@ -16,6 +17,7 @@ from .chroma import ChromaRetriever, RetrievalResult
 from .filters import MetadataFilterSet
 
 DEFAULT_RETRIEVAL_COMPONENTS = ("chroma", "bm25")
+WEIGHT_SUM_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -115,7 +117,15 @@ class RetrievalPipeline:
         self.aggregation_strategy = aggregation_strategy or get_aggregation_strategy(
             DEFAULT_AGGREGATION_STRATEGY
         )
-        self.component_weights = dict(component_weights or {})
+        if (
+            component_weights is not None
+            and self.aggregation_strategy.name != "weighted_rrf"
+        ):
+            raise ValueError("component weights are only supported with weighted_rrf")
+        self.component_weights = normalize_component_weights(
+            component_names=self.component_names,
+            component_weights=component_weights,
+        )
 
     @property
     def component_names(self) -> list[str]:
@@ -149,10 +159,7 @@ class RetrievalPipeline:
             if len(self.components) == 1
             else "hybrid",
             "aggregation_strategy": self.aggregation_strategy.name,
-            "component_weights": {
-                component_name: self.component_weights.get(component_name, 1.0)
-                for component_name in self.component_names
-            }
+            "component_weights": dict(self.component_weights)
             if len(self.components) > 1
             else None,
         }
@@ -173,7 +180,12 @@ def aggregate_retrieval_results(
     strategy = aggregation_strategy or get_aggregation_strategy(
         DEFAULT_AGGREGATION_STRATEGY
     )
-    weights = dict(component_weights or {})
+    if component_weights is not None and strategy.name != "weighted_rrf":
+        raise ValueError("component weights are only supported with weighted_rrf")
+    weights = normalize_component_weights(
+        component_names=component_names,
+        component_weights=component_weights,
+    )
     if top_k is None:
         top_k = max((len(results) for results in component_results), default=0)
     if top_k <= 0:
@@ -184,7 +196,7 @@ def aggregate_retrieval_results(
             ComponentRetrievalResults(
                 component_name=component_name,
                 results=results,
-                weight=weights.get(component_name, 1.0),
+                weight=weights[component_name],
             )
             for component_name, results in zip(component_names, component_results)
         ],
@@ -229,3 +241,97 @@ def build_retrieval_pipeline(
         aggregation_strategy=aggregation_strategy,
         component_weights=component_weights,
     )
+
+
+def parse_component_weights(
+    weight_specs: list[str] | None,
+    component_names: list[str],
+) -> dict[str, float] | None:
+    """Parse repeatable component=weight CLI values into normalized weights."""
+
+    if not weight_specs:
+        return None
+
+    weights: dict[str, float] = {}
+    enabled_components = set(component_names)
+    for spec in weight_specs:
+        if "=" not in spec:
+            raise ValueError(
+                f"Invalid component weight '{spec}'. Expected COMPONENT=WEIGHT."
+            )
+        component_name, raw_weight = (part.strip() for part in spec.split("=", 1))
+        if not component_name:
+            raise ValueError(
+                f"Invalid component weight '{spec}'. Component name must not be empty."
+            )
+        if component_name in weights:
+            raise ValueError(f"Duplicate component weight: {component_name}")
+        if component_name not in enabled_components:
+            available = ", ".join(component_names)
+            raise ValueError(
+                f"Component weight provided for disabled or unknown component "
+                f"'{component_name}'. Enabled components: {available}"
+            )
+        try:
+            weight = float(raw_weight)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid weight for component '{component_name}': {raw_weight}"
+            ) from exc
+        weights[component_name] = weight
+
+    return normalize_component_weights(
+        component_names=component_names,
+        component_weights=weights,
+    )
+
+
+def normalize_component_weights(
+    component_names: list[str],
+    component_weights: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Return validated weights that sum to one across enabled components."""
+
+    if not component_names:
+        raise ValueError("at least one retrieval component is required")
+
+    if component_weights is None:
+        equal_weight = 1.0 / len(component_names)
+        return {component_name: equal_weight for component_name in component_names}
+
+    component_name_set = set(component_names)
+    weight_name_set = set(component_weights)
+    unknown_names = sorted(weight_name_set - component_name_set)
+    if unknown_names:
+        raise ValueError(
+            "Component weights include disabled or unknown components: "
+            + ", ".join(unknown_names)
+        )
+
+    missing_names = sorted(component_name_set - weight_name_set)
+    if missing_names:
+        raise ValueError(
+            "Component weights must be provided for every enabled component. "
+            "Missing: "
+            + ", ".join(missing_names)
+        )
+
+    normalized_weights = {}
+    for component_name in component_names:
+        weight = float(component_weights[component_name])
+        if weight < 0:
+            raise ValueError(
+                f"Component weight must be non-negative: {component_name}={weight}"
+            )
+        normalized_weights[component_name] = weight
+
+    weight_sum = sum(normalized_weights.values())
+    if not isclose(
+        weight_sum,
+        1.0,
+        rel_tol=WEIGHT_SUM_TOLERANCE,
+        abs_tol=WEIGHT_SUM_TOLERANCE,
+    ):
+        raise ValueError(f"Component weights must sum to 1.0; got {weight_sum}")
+
+    return normalized_weights

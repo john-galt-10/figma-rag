@@ -75,34 +75,31 @@ The current plan is to build the system in stages:
 7. evaluate retrieval and answer quality
 8. later extend the system to work with multimodal Figma context
 
-## Current milestone
+## Milestone recap
 
-The current baseline covers the full local retrieval loop for the initial Figma Help Center corpus: ingestion, Markdown normalization, hierarchical chunking, Chroma indexing, semantic retrieval, chunk-level label mapping, and retrieval evaluation.
+* **🌱 2026-06-21: Project foundation and ingestion baseline**  
+  Initial repository structure, README, Figma Help Center ingestion module, download script, and ingestion tests.
 
-The retrieval pipeline currently:
+* **🧹 2026-06-22: Markdown normalization and hierarchical chunking**  
+  Added the HTML-to-Markdown cleaning pipeline, structured document normalization, and the first heading-aware chunking pipeline.
 
-* reads cleaned Markdown documents from the processed manifest
-* chunks documents with the heading-aware hierarchical strategy
-* measures chunk limits with the selected Sentence Transformers tokenizer
-* preserves document metadata and heading paths in each chunk
-* writes versioned JSONL artifacts for reproducible experiments
-* embeds chunk text with `BAAI/bge-small-en-v1.5`
-* stores vectors and source metadata in local persistent Chroma collections
-* retrieves through the reusable pipeline in `src/figma_rag/retrieval/`
-* supports metadata filtering, currently including `token_count > 30`
-* applies the default topic filter for relevant Figma Help Center areas
+* **🔎 2026-06-26: Local semantic retrieval baseline**  
+  Added Chroma vector indexing, Sentence Transformers embeddings, the reusable Chroma retriever, and the retrieval example script.
 
-The evaluation pipeline maps document-level answer spans onto chunk IDs with `scripts/map_relevant_chunks.py`, then compares retrieved chunk IDs against those labels with `scripts/evaluate_retriever.py`. The latest saved retrieval run uses 20 manually annotated queries against the `hierarchical-bge-w-topic` collection:
+* **🎯 2026-06-26: Chunk span tracking for evaluation alignment**  
+  Added source span tracking to chunks so document-level annotations can be mapped back to chunk IDs.
 
-* source artifact: `data/eval/retrieval_test/test_results/retrieval_metrics_hierarchical_bge-small-en-v1.5_20260629-1709_k1-3-5-9-15-20_20260701T1558.json`
-* Hit@1: `0.40`
-* Hit@5: `0.75`
-* Hit@9: `0.85`
-* Hit@15 and Hit@20: `0.90`
-* Recall@5: `0.595`
-* Recall@15 and Recall@20: `0.807`
+* **📊 2026-06-29: Retrieval evaluation and filtering pipeline**  
+  Added label-to-chunk mapping, retrieval metrics evaluation, static metadata filtering, and the declared retrieval pipeline.
 
-See `docs/data_pipeline_and_evaluation.md` for the full command-level pipeline and artifact alignment checklist.
+* **🧭 2026-06-30: Retrieval analysis and annotation workflow**  
+  Added metadata filtering improvements, breadcrumbs, a retrieval label review UI, annotation completion tooling, and pipeline documentation.
+
+* **🧱 2026-07-01 to 2026-07-02: BM25 lexical retrieval baseline**  
+  Added BM25 index building and BM25 retrieval support alongside the semantic retriever.
+
+* **⚡ 2026-07-02: Hybrid retrieval aggregation**  
+  Added aggregation logic to combine retrieval outputs, enabling hybrid search experiments over semantic and lexical retrieval results.
 
 ## Build the local vector index
 

@@ -31,6 +31,7 @@ from figma_rag.retrieval import (  # noqa: E402
     RetrievalRequest,
     available_aggregation_strategies,
     build_retrieval_pipeline,
+    parse_component_weights,
     parse_metadata_filter_set,
 )
 
@@ -158,6 +159,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--component-weight",
+        action="append",
+        default=None,
+        metavar="COMPONENT=WEIGHT",
+        help=(
+            "Weighted RRF component weight. Can be repeated once per enabled "
+            "component, and weights must sum to 1.0. "
+            "Example: --component-weight chroma=0.5 --component-weight bm25=0.5."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -212,6 +224,15 @@ def main() -> int:
     metadata_filters_enabled = not args.disable_metadata_filters
     topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
     retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)
+    if args.component_weight and args.aggregation_strategy != "weighted_rrf":
+        parser.error("--component-weight is only supported with weighted_rrf aggregation")
+    try:
+        component_weights = parse_component_weights(
+            args.component_weight,
+            retrieval_components,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     test_set_examples = load_retrieval_test_set(args.test_set_path)
 
@@ -231,6 +252,7 @@ def main() -> int:
             chroma_retriever=chroma_retriever,
             bm25_retriever=bm25_retriever,
             aggregation_strategy_name=args.aggregation_strategy,
+            component_weights=component_weights,
         )
     except ValueError as exc:
         parser.error(str(exc))
