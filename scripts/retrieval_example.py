@@ -1,4 +1,4 @@
-"""Minimal example for retrieving Figma documentation chunks from Chroma."""
+"""Minimal example for retrieving Figma documentation chunks."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from figma_rag.retrieval import (
+    BM25Retriever,
     ChromaRetriever,
+    DEFAULT_RETRIEVAL_COMPONENTS,
     RetrievalRequest,
     build_retrieval_pipeline,
     parse_metadata_filter_set,
@@ -31,11 +33,18 @@ DEFAULT_METADATA_FILTERS = [
     # "product=figma-design-or-general",
 ]
 DEFAULT_TOPIC_FILTER = {"topic": {"$in": ["Figma Design", "Administration", "Help", "Community", "Work across Figma", "Get Started"]}}
+DEFAULT_BM25_INDEX_DIR = (
+    REPO_ROOT
+    / "data"
+    / "processed"
+    / "bm25"
+    / "hierarchical_bge-small-en-v1.5_t320_o40_bm25_stemmed_english_20260701t1733"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a simple semantic retrieval query against local Chroma."
+        description="Run a simple retrieval query against local indexes."
     )
     parser.add_argument(
         "query",
@@ -71,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sentence Transformers model used to embed the query.",
     )
     parser.add_argument(
+        "--bm25-index-dir",
+        type=Path,
+        default=DEFAULT_BM25_INDEX_DIR,
+        help="Directory containing the persisted BM25 index.",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=5,
@@ -104,9 +119,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retrieval-component",
         action="append",
-        choices=["chroma"],
+        choices=["chroma", "bm25"],
         default=None,
-        help="Retrieval component to enable. Defaults to chroma.",
+        help=(
+            "Retrieval component to enable. Can be repeated. Defaults to chroma "
+            "and bm25 together, which currently raises the hybrid TODO error."
+        ),
     )
     return parser
 
@@ -135,17 +153,22 @@ def main() -> int:
 
     metadata_filters_enabled = not args.disable_metadata_filters
     topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
-    retrieval_components = args.retrieval_component or ["chroma"]
+    retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)
 
-    collection_name = resolve_collection_name(
-        chunks_path=args.chunks_path,
-        model_name=args.model,
-        collection_name=args.collection_name,
-    )
+    collection_name = None
+    if "chroma" in retrieval_components:
+        collection_name = resolve_collection_name(
+            chunks_path=args.chunks_path,
+            model_name=args.model,
+            collection_name=args.collection_name,
+        )
 
     print(f"Query: {args.query}")
-    print(f"Collection: {collection_name}")
-    print(f"Embedding model: {args.model}")
+    if collection_name:
+        print(f"Collection: {collection_name}")
+        print(f"Embedding model: {args.model}")
+    if "bm25" in retrieval_components:
+        print(f"BM25 index directory: {args.bm25_index_dir.as_posix()}")
     print(f"Pipeline: {', '.join(retrieval_components)}")
     print(f"Metadata filters: {metadata_filters.to_description(metadata_filters_enabled)}")
     print(
@@ -154,28 +177,37 @@ def main() -> int:
     )
     print()
 
-    retriever = ChromaRetriever(
-        persist_dir=args.persist_dir,
-        collection_name=collection_name,
-        model_name=args.model,
-    )
+    chroma_retriever = None
+    if "chroma" in retrieval_components:
+        chroma_retriever = ChromaRetriever(
+            persist_dir=args.persist_dir,
+            collection_name=str(collection_name),
+            model_name=args.model,
+        )
+    bm25_retriever = None
+    if "bm25" in retrieval_components:
+        bm25_retriever = BM25Retriever(index_dir=args.bm25_index_dir)
     try:
         pipeline = build_retrieval_pipeline(
             component_names=retrieval_components,
-            chroma_retriever=retriever,
+            chroma_retriever=chroma_retriever,
+            bm25_retriever=bm25_retriever,
         )
     except ValueError as exc:
         parser.error(str(exc))
 
-    results = pipeline.retrieve(
-        RetrievalRequest(
-            query=args.query,
-            top_k=args.top_k,
-            metadata_filters=metadata_filters,
-            metadata_filters_enabled=metadata_filters_enabled,
-            raw_chroma_where=topic_filter,
+    try:
+        results = pipeline.retrieve(
+            RetrievalRequest(
+                query=args.query,
+                top_k=args.top_k,
+                metadata_filters=metadata_filters,
+                metadata_filters_enabled=metadata_filters_enabled,
+                raw_chroma_where=topic_filter,
+            )
         )
-    )
+    except NotImplementedError as exc:
+        parser.error(str(exc))
 
     for result in results:
         preview = " ".join(result.text.split())[:500]

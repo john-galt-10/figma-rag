@@ -25,7 +25,9 @@ from figma_rag.evaluation import (  # noqa: E402
     write_metrics_json,
 )
 from figma_rag.retrieval import (  # noqa: E402
+    BM25Retriever,
     ChromaRetriever,
+    DEFAULT_RETRIEVAL_COMPONENTS,
     RetrievalRequest,
     build_retrieval_pipeline,
     parse_metadata_filter_set,
@@ -39,6 +41,13 @@ DEFAULT_TEST_SET_PATH = (
     / "golden_set_manual_2_complete_20260701_1753_relevant_chunks_hierarchical_bge-small-en-v1.5_20260629-1709.jsonl"
 )
 DEFAULT_PERSIST_DIR = REPO_ROOT / "data" / "processed" / "figma_docs" / "chroma"
+DEFAULT_BM25_INDEX_DIR = (
+    REPO_ROOT
+    / "data"
+    / "processed"
+    / "bm25"
+    / "hierarchical_bge-small-en-v1.5_t320_o40_bm25_stemmed_english_20260701t1733"
+)
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test" / "test_results"
 DEFAULT_METADATA_FILTERS = [
     "token_count>30",
@@ -54,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the command line parser for retrieval evaluation."""
 
     parser = argparse.ArgumentParser(
-        description="Evaluate a Chroma retriever against a mapped retrieval test set."
+        description="Evaluate retrievers against a mapped retrieval test set."
     )
     parser.add_argument(
         "--test-set-path",
@@ -78,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default="BAAI/bge-small-en-v1.5",
         help="Sentence Transformers model used to embed each query.",
+    )
+    parser.add_argument(
+        "--bm25-index-dir",
+        type=Path,
+        default=DEFAULT_BM25_INDEX_DIR,
+        help="Directory containing the persisted BM25 index.",
     )
     parser.add_argument(
         "--top-k",
@@ -125,9 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retrieval-component",
         action="append",
-        choices=["chroma"],
+        choices=["chroma", "bm25"],
         default=None,
-        help="Retrieval component to enable. Defaults to chroma.",
+        help=(
+            "Retrieval component to enable. Can be repeated. Defaults to chroma "
+            "and bm25 together, which currently raises the hybrid TODO error."
+        ),
     )
     parser.add_argument(
         "--seed",
@@ -183,19 +201,25 @@ def main() -> int:
 
     metadata_filters_enabled = not args.disable_metadata_filters
     topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
-    retrieval_components = args.retrieval_component or ["chroma"]
+    retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)
 
     test_set_examples = load_retrieval_test_set(args.test_set_path)
 
-    retriever = ChromaRetriever(
-        persist_dir=args.persist_dir,
-        collection_name=args.collection_name,
-        model_name=args.model,
-    )
+    chroma_retriever = None
+    if "chroma" in retrieval_components:
+        chroma_retriever = ChromaRetriever(
+            persist_dir=args.persist_dir,
+            collection_name=args.collection_name,
+            model_name=args.model,
+        )
+    bm25_retriever = None
+    if "bm25" in retrieval_components:
+        bm25_retriever = BM25Retriever(index_dir=args.bm25_index_dir)
     try:
         pipeline = build_retrieval_pipeline(
             component_names=retrieval_components,
-            chroma_retriever=retriever,
+            chroma_retriever=chroma_retriever,
+            bm25_retriever=bm25_retriever,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -221,7 +245,10 @@ def main() -> int:
             metadata_filters_enabled=metadata_filters_enabled,
             raw_chroma_where=topic_filter,
         )
-        results = stabilize_retrieval_ties(pipeline.retrieve(request))
+        try:
+            results = stabilize_retrieval_ties(pipeline.retrieve(request))
+        except NotImplementedError as exc:
+            parser.error(str(exc))
         retrieved_chunk_ids_by_query_id[example.query_id] = [
             result.chunk_id for result in results
         ]
@@ -251,10 +278,17 @@ def main() -> int:
             "test_set_sha256": sha256_file(args.test_set_path),
             "persist_dir": args.persist_dir.as_posix(),
             "persist_dir_resolved": args.persist_dir.resolve().as_posix(),
+            "bm25_index_dir": args.bm25_index_dir.as_posix(),
+            "bm25_index_dir_resolved": args.bm25_index_dir.resolve().as_posix(),
             "output_dir": args.output_dir.as_posix(),
             "output_dir_resolved": args.output_dir.resolve().as_posix(),
             "collection_name": args.collection_name,
-            "collection": _collection_metadata(retriever),
+            "collection": _collection_metadata(chroma_retriever)
+            if chroma_retriever
+            else None,
+            "bm25_index": _bm25_index_metadata(bm25_retriever)
+            if bm25_retriever
+            else None,
             "model": args.model,
             "retrieval_pipeline": pipeline.to_description(),
             "metadata_filters": metadata_filters.to_description(
@@ -326,6 +360,16 @@ def _collection_metadata(retriever: ChromaRetriever) -> dict:
         metadata["metadata_error"] = str(exc)
 
     return metadata
+
+
+def _bm25_index_metadata(retriever: BM25Retriever) -> dict:
+    """Return best-effort metadata for the BM25 index used in evaluation."""
+
+    return {
+        "index_dir": retriever.index_dir.as_posix(),
+        "index_dir_resolved": retriever.index_dir.resolve().as_posix(),
+        "metadata": retriever.metadata,
+    }
 
 
 if __name__ == "__main__":
