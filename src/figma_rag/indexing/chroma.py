@@ -11,6 +11,8 @@ from typing import Iterable
 
 from tqdm.auto import tqdm
 
+from figma_rag.embeddings import load_sentence_transformer
+
 REQUIRED_CHUNK_FIELDS = (
     "chunk_id",
     "text",
@@ -53,7 +55,7 @@ def build_chroma_index(
         raise ValueError("batch_size must be greater than zero")
 
     chunks = load_chunk_records(chunks_path)
-    model = _load_sentence_transformer(model_name)
+    model = load_sentence_transformer(model_name)
     client = _build_persistent_client(persist_dir)
 
     if recreate:
@@ -218,17 +220,6 @@ def _build_persistent_client(persist_dir: Path):
 
     persist_dir.mkdir(parents=True, exist_ok=True)
     return chromadb.PersistentClient(path=str(persist_dir))
-
-
-def _load_sentence_transformer(model_name: str):
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError as exc:
-        raise RuntimeError(
-            "The 'sentence-transformers' package is required to embed chunks"
-        ) from exc
-
-    return SentenceTransformer(model_name, trust_remote_code=True)
 
 
 def _delete_collection_if_exists(client, collection_name: str) -> None:

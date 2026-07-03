@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from figma_rag.embeddings import load_sentence_transformer
 from figma_rag.indexing import build_default_collection_name
 
 
@@ -35,7 +36,7 @@ class ChromaRetriever:
         self.persist_dir = persist_dir
         self.collection_name = collection_name
         self.model_name = model_name
-        self._model = _load_sentence_transformer(model_name)
+        self._model = load_sentence_transformer(model_name)
         self._collection = _load_collection(persist_dir, collection_name)
 
     def retrieve(
@@ -117,17 +118,6 @@ def _format_section(value: object) -> str:
     if not heading_path:
         return "(document start)"
     return " > ".join(str(heading) for heading in heading_path)
-
-
-def _load_sentence_transformer(model_name: str):
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError as exc:
-        raise RuntimeError(
-            "The 'sentence-transformers' package is required to retrieve chunks"
-        ) from exc
-
-    return SentenceTransformer(model_name, trust_remote_code=True)
 
 
 def _load_collection(persist_dir: Path, collection_name: str):

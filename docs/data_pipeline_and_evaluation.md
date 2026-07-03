@@ -90,6 +90,14 @@ Output: a persistent Chroma collection under `data\processed\figma_docs\chroma\`
 
 Underlying mechanism: the script embeds each chunk text with Sentence Transformers and upserts the vectors plus chunk metadata into Chroma. Use the same embedding model here that you intend to use at retrieval and evaluation time.
 
+The embedding loader requires `python-dotenv` in the active `figma-navigator` environment; install it with `pip install python-dotenv` if needed. To prefer local model weights for a model ID, add a repo-local `.env` file with a JSON mapping:
+
+```dotenv
+FIGMA_RAG_MODEL_PATHS_JSON={"BAAI/bge-base-en-v1.5":"C:/Users/samue/models/bge-base-en-v1.5"}
+```
+
+When the mapped directory exists, the loader uses it. When the mapped directory is missing, it falls back to the model ID and the normal Hugging Face cache/download behavior.
+
 Useful parameters:
 
 - `--chunks-path`: chunk JSONL file to index.

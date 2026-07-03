@@ -114,6 +114,14 @@ python scripts/build_vector_index.py
 
 The script reads the selected chunk JSONL, embeds each chunk's `text` field with Sentence Transformers, and upserts the vectors plus source metadata into `data/processed/figma_docs/chroma/`. By default, the collection name is derived from the chunking artifact and embedding model, so indexing a different chunking run creates a separate collection. It expects `chromadb` and `sentence-transformers` to be available in the active environment.
 
+The embedding loader also expects `python-dotenv` in the `figma-navigator` environment; install it with `pip install python-dotenv` if needed. To prefer locally downloaded model weights while keeping `--model` as the canonical model ID, create a local `.env` file:
+
+```dotenv
+FIGMA_RAG_MODEL_PATHS_JSON={"BAAI/bge-base-en-v1.5":"C:/Users/samue/models/bge-base-en-v1.5"}
+```
+
+If the mapped directory exists, indexing and retrieval load the local weights. If the mapped directory is missing, they fall back to the model ID and use the normal Hugging Face cache/download behavior.
+
 Query the local collection with the simple retrieval example:
 
 ```powershell
