@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+from figma_rag.embeddings import load_cross_encoder
+
 from .chroma import RetrievalResult
 
 DEFAULT_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
@@ -27,7 +29,7 @@ class CrossEncoderReranker:
 
     def __init__(self, model_name: str = DEFAULT_RERANKER_MODEL) -> None:
         self.model_name = model_name
-        self._model = _load_cross_encoder(model_name)
+        self._model = load_cross_encoder(model_name)
 
     def rerank(
         self,
@@ -113,16 +115,3 @@ def _with_reranking_metadata(
         source_url=result.source_url,
         metadata=metadata,
     )
-
-
-def _load_cross_encoder(model_name: str):
-    """Load a Sentence Transformers cross-encoder model."""
-
-    try:
-        from sentence_transformers import CrossEncoder
-    except ImportError as exc:
-        raise RuntimeError(
-            "The 'sentence-transformers' package is required to rerank chunks"
-        ) from exc
-
-    return CrossEncoder(model_name, trust_remote_code=True)

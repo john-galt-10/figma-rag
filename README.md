@@ -114,13 +114,13 @@ python scripts/build_vector_index.py
 
 The script reads the selected chunk JSONL, embeds each chunk's `text` field with Sentence Transformers, and upserts the vectors plus source metadata into `data/processed/figma_docs/chroma/`. By default, the collection name is derived from the chunking artifact and embedding model, so indexing a different chunking run creates a separate collection. It expects `chromadb` and `sentence-transformers` to be available in the active environment.
 
-The embedding loader also expects `python-dotenv` in the `figma-navigator` environment; install it with `pip install python-dotenv` if needed. To prefer locally downloaded model weights while keeping `--model` as the canonical model ID, create a local `.env` file:
+The Sentence Transformers model loader also expects `python-dotenv` in the `figma-navigator` environment; install it with `pip install python-dotenv` if needed. To prefer locally downloaded model weights while keeping `--model` and `--reranker-model` as canonical model IDs, create a local `.env` file:
 
 ```dotenv
-FIGMA_RAG_MODEL_PATHS_JSON={"BAAI/bge-base-en-v1.5":"C:/Users/samue/models/bge-base-en-v1.5"}
+FIGMA_RAG_MODEL_PATHS_JSON={"BAAI/bge-small-en-v1.5":"C:/Users/samue/models/bge-small-en-v1.5","cross-encoder/ms-marco-MiniLM-L6-v2":"C:/Users/samue/models/ms-marco-MiniLM-L6-v2"}
 ```
 
-If the mapped directory exists, indexing and retrieval load the local weights. If the mapped directory is missing, they fall back to the model ID and use the normal Hugging Face cache/download behavior.
+If the mapped directory exists, indexing, retrieval, and reranking load the local weights. If the mapped directory is missing, they fall back to the model ID and use the normal Hugging Face cache/download behavior. The same mapping applies to `scripts/evaluate_retriever.py --reranker-model ...` and `scripts/retrieval_example.py --reranker-model ...`.
 
 Query the local collection with the simple retrieval example:
 
@@ -128,7 +128,7 @@ Query the local collection with the simple retrieval example:
 python scripts/retrieval_example.py "How do variables work in prototypes?"
 ```
 
-The example uses the reusable Chroma retriever in `src/figma_rag/retrieval/`: it embeds the query with the selected Sentence Transformers model, searches the matching Chroma collection, and prints the nearest chunks with source metadata. Use `--chunks-path` and `--model` to target a specific indexed collection, `--collection-name` to override the generated collection name, and `--top-k` to choose how many chunks to return.
+The example uses the reusable Chroma retriever in `src/figma_rag/retrieval/`: it embeds the query with the selected Sentence Transformers model, searches the matching Chroma collection, optionally reranks candidates with the selected cross-encoder, and prints the nearest chunks with source metadata. Use `--chunks-path` and `--model` to target a specific indexed collection, `--collection-name` to override the generated collection name, `--reranker-model` to choose the cross-encoder, and `--top-k` to choose how many chunks to return.
 
 ## Repository intent
 

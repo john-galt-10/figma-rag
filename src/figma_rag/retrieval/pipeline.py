@@ -170,6 +170,9 @@ class RetrievalPipeline:
             component_results = [
                 component.retrieve(request) for component in self.components
             ]
+
+            for i, cr in enumerate(component_results): assert len(cr) > 0, f"Component {i} has returned no results."
+
             return aggregate_retrieval_results(
                 component_results=component_results,
                 component_names=self.component_names,

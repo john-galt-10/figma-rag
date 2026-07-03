@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--collection-name",
-        default="hierarchical-bge-w-product",
+        default="hierarchical-bge-w-topic",
         help=(
             "Name of the Chroma collection to query. By default, a name is built "
             "from the chunking artifact and embedding model."
@@ -276,7 +276,7 @@ def main() -> int:
         if reranking_enabled
         else None
     )
-    try:
+    try:        
         pipeline = build_retrieval_pipeline(
             component_names=retrieval_components,
             chroma_retriever=chroma_retriever,

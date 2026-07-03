@@ -90,13 +90,13 @@ Output: a persistent Chroma collection under `data\processed\figma_docs\chroma\`
 
 Underlying mechanism: the script embeds each chunk text with Sentence Transformers and upserts the vectors plus chunk metadata into Chroma. Use the same embedding model here that you intend to use at retrieval and evaluation time.
 
-The embedding loader requires `python-dotenv` in the active `figma-navigator` environment; install it with `pip install python-dotenv` if needed. To prefer local model weights for a model ID, add a repo-local `.env` file with a JSON mapping:
+The Sentence Transformers model loader requires `python-dotenv` in the active `figma-navigator` environment; install it with `pip install python-dotenv` if needed. To prefer local model weights for embedding or reranking model IDs, add a repo-local `.env` file with a JSON mapping:
 
 ```dotenv
-FIGMA_RAG_MODEL_PATHS_JSON={"BAAI/bge-base-en-v1.5":"C:/Users/samue/models/bge-base-en-v1.5"}
+FIGMA_RAG_MODEL_PATHS_JSON={"BAAI/bge-small-en-v1.5":"C:/Users/samue/models/bge-small-en-v1.5","cross-encoder/ms-marco-MiniLM-L6-v2":"C:/Users/samue/models/ms-marco-MiniLM-L6-v2"}
 ```
 
-When the mapped directory exists, the loader uses it. When the mapped directory is missing, it falls back to the model ID and the normal Hugging Face cache/download behavior.
+When the mapped directory exists, the loader uses it. When the mapped directory is missing, it falls back to the model ID and the normal Hugging Face cache/download behavior. The same mapping applies to `scripts\evaluate_retriever.py --reranker-model ...` and `scripts\retrieval_example.py --reranker-model ...`.
 
 Useful parameters:
 
@@ -177,7 +177,7 @@ Output:
 - aggregate metrics JSON in `data\eval\retrieval_test\test_results\`
 - optional per-query CSV details when `--save-details` is used
 
-Underlying mechanism: the script embeds each query, retrieves chunks from the configured collection, compares retrieved chunk IDs against the mapped relevant chunk IDs, and reports metrics at each requested `top-k`.
+Underlying mechanism: the script embeds each query, retrieves chunks from the configured collection, optionally reranks candidates with the selected cross-encoder, compares retrieved chunk IDs against the mapped relevant chunk IDs, and reports metrics at each requested `top-k`.
 
 Useful parameters:
 
@@ -185,6 +185,8 @@ Useful parameters:
 - `--persist-dir`: Chroma persistence directory.
 - `--collection-name`: Chroma collection to query.
 - `--model`: query embedding model. Use the same model used to build the index.
+- `--reranker-model`: cross-encoder model used when reranking is enabled. Local weights can be selected through `FIGMA_RAG_MODEL_PATHS_JSON`.
+- `--candidate-k`: number of candidates retrieved by each retriever before reranking.
 - `--top-k`: one or more cutoffs to evaluate.
 - `--output-dir`: directory for metrics and details.
 - `--save-details`: write per-query debug CSV rows.
