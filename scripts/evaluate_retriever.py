@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from colorama import Fore, Style, init
+from tabulate import tabulate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -61,6 +63,14 @@ DEFAULT_TOPIC_FILTER = {"topic": {"$in": ["Figma Design", "Administration", "Hel
 TEST_SET_FILENAME_PATTERN = re.compile(
     r"^.+?_relevant_chunks_(?P<label>.+?)_(?P<timestamp>\d{8}-\d{4})$"
 )
+METRIC_COLUMNS = [
+    "hit_rate_at_k",
+    "recall_at_k",
+    "precision_at_k",
+    "mrr_at_k",
+    "map_at_k",
+    "ndcg_at_k",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -212,7 +222,7 @@ def build_output_paths(
 
     top_k_label = "k" + "-".join(str(top_k) for top_k in top_k_values)
     artifact_label = f"{test_set_label}_{test_set_timestamp}_{top_k_label}"
-    
+
     return (
         output_dir / f"retrieval_metrics_{artifact_label}_{current_timestamp}.json",
         output_dir / f"retrieval_details_{artifact_label}_{current_timestamp}.parquet",
@@ -230,9 +240,62 @@ def _describe_topic_filter(topic_filter: dict, enabled: bool = True) -> dict:
     }
 
 
+def print_evaluation_settings(
+    pipeline_description: dict,
+    top_k_values: list[int],
+    reranking_enabled: bool,
+    reranker_model: str,
+    effective_candidate_k: int | None,
+    metadata_filter_descriptions: list[dict],
+    topic_filter_description: dict,
+) -> None:
+    """Print the evaluation settings block in green for terminal readability."""
+
+    lines = [
+        "Evaluating Retriever performance w/ the following settings:",
+        f"Pipeline: {pipeline_description}",
+        f"Final top-k values: {top_k_values}",
+        f"Reranking enabled: {reranking_enabled}",
+    ]
+    if reranking_enabled:
+        lines.extend(
+            [
+                f"Reranker model: {reranker_model}",
+                f"Candidate-k per retriever: {effective_candidate_k}",
+            ]
+        )
+    else:
+        lines.append("Candidate-k per retriever: ignored")
+    lines.extend(
+        [
+            f"Metadata filters: {metadata_filter_descriptions}",
+            f"Topic filter: {topic_filter_description}",
+        ]
+    )
+    print(Fore.CYAN + "\n".join(lines) + Style.RESET_ALL)
+
+
+def format_metrics_table(metrics_by_k: dict[str, dict[str, float]]) -> str:
+    """Return a compact display-only metrics table rounded to 3 decimals."""
+
+    rows = []
+    for top_k, metrics in sorted(metrics_by_k.items(), key=lambda item: int(item[0])):
+        row = {"k": int(top_k)}
+        row.update(
+            {
+                metric_name: f"{metrics[metric_name]:.3f}"
+                for metric_name in METRIC_COLUMNS
+            }
+        )
+        rows.append(row)
+
+    return tabulate(rows, headers="keys", tablefmt="grid")
+
+
 def main() -> int:
     """Run retrieval evaluation and write comparison-friendly artifacts."""
 
+    init(autoreset=True)
     parser = build_parser()
     args = parser.parse_args()
     seed_settings = set_reproducibility_seed(args.seed)
@@ -312,23 +375,21 @@ def main() -> int:
     retrieved_component_ranks_by_query_id = {}
     reranking_latencies_seconds: list[float] = []
 
-    print("+-----------------------------------------------------------------------+")
-    print("Evaluating Retriever performance w/ the following settings:")
-    print(f"Pipeline: {pipeline.to_description()}")
-    print(f"Final top-k values: {top_k_values}")
-    print(f"Reranking enabled: {reranking_enabled}")
-    if reranking_enabled:
-        print(f"Reranker model: {args.reranker_model}")
-        print(f"Candidate-k per retriever: {effective_candidate_k}")
-    else:
-        print("Candidate-k per retriever: ignored")
-    print(f"Metadata filters: {[fil.to_description() for fil in metadata_filters.filters]}")
-    print(
-        "Topic filter: "
-        f"{_describe_topic_filter(DEFAULT_TOPIC_FILTER, enabled=not args.disable_topic_filter)}"
+    print_evaluation_settings(
+        pipeline_description=pipeline.to_description(),
+        top_k_values=top_k_values,
+        reranking_enabled=reranking_enabled,
+        reranker_model=args.reranker_model,
+        effective_candidate_k=effective_candidate_k,
+        metadata_filter_descriptions=[
+            fil.to_description() for fil in metadata_filters.filters
+        ],
+        topic_filter_description=_describe_topic_filter(
+            DEFAULT_TOPIC_FILTER,
+            enabled=not args.disable_topic_filter,
+        ),
     )
-    print("+-----------------------------------------------------------------------+")
-    
+
     for example in test_set_examples:
         request = RetrievalRequest(
             query=example.query,
@@ -421,7 +482,8 @@ def main() -> int:
         write_detailed_results_parquet(details_path, evaluation.details)
         print(f"Wrote detailed per-query results to {details_path}")
 
-    print(json.dumps(evaluation.metrics_by_k, indent=2))
+    print()
+    print(format_metrics_table(evaluation.metrics_by_k))
     return 0
 
 

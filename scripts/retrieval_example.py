@@ -6,6 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from colorama import Fore, Style, init
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -184,7 +186,88 @@ def _describe_topic_filter(topic_filter: dict, enabled: bool = True) -> dict:
     }
 
 
+def print_retrieval_settings(
+    query: str,
+    collection_name: str | None,
+    model_name: str,
+    bm25_index_dir: Path,
+    retrieval_components: list[str],
+    aggregation_strategy: str,
+    top_k: int,
+    reranking_enabled: bool,
+    reranker_model: str,
+    effective_candidate_k: int | None,
+    component_weights: dict[str, float] | None,
+    metadata_filter_description: list[dict],
+    topic_filter_description: dict,
+) -> None:
+    """Print retrieval settings in cyan for terminal readability."""
+
+    lines = [f"Query: {query}"]
+    if collection_name:
+        lines.extend(
+            [
+                f"Collection: {collection_name}",
+                f"Embedding model: {model_name}",
+            ]
+        )
+    if "bm25" in retrieval_components:
+        lines.append(f"BM25 index directory: {bm25_index_dir.as_posix()}")
+    lines.extend(
+        [
+            f"Pipeline: {', '.join(retrieval_components)}",
+            f"Aggregation strategy: {aggregation_strategy}",
+            f"Final top-k: {top_k}",
+            f"Reranking enabled: {reranking_enabled}",
+        ]
+    )
+    if reranking_enabled:
+        lines.extend(
+            [
+                f"Reranker model: {reranker_model}",
+                f"Candidate-k per retriever: {effective_candidate_k}",
+            ]
+        )
+    else:
+        lines.append("Candidate-k per retriever: ignored")
+    if component_weights is not None:
+        lines.append(f"Component weights: {component_weights}")
+    lines.extend(
+        [
+            f"Metadata filters: {metadata_filter_description}",
+            f"Topic filter: {topic_filter_description}",
+        ]
+    )
+    print(Fore.CYAN + "\n".join(lines) + Style.RESET_ALL)
+    print()
+
+
+def print_retrieved_chunk(result) -> None:
+    """Print one retrieved chunk block with separate metadata and preview colors."""
+
+    preview = " ".join(result.text.split())[:500]
+    rerank_score = result.metadata.get("rerank_score")
+    main_lines = [
+        f"{result.rank}. {result.title}",
+        f"   Chunk: {result.chunk_id}",
+        f"   Section: {result.section}",
+    ]
+    if rerank_score is not None:
+        main_lines.append(f"   Rerank score: {float(rerank_score):.4f}")
+    main_lines.extend(
+        [
+            f"   Distance: {result.distance:.4f}",
+            f"   Source: {result.source_url}",
+        ]
+    )
+    print(Fore.LIGHTYELLOW_EX + "\n".join(main_lines) + Style.RESET_ALL)
+    print(Fore.LIGHTBLACK_EX + f"   Metadata: {result.metadata}" + Style.RESET_ALL)
+    print(Fore.WHITE + f"   Preview: {preview}" + Style.RESET_ALL)
+    print()
+
+
 def main() -> int:
+    init(autoreset=True)
     parser = build_parser()
     args = parser.parse_args()
     if args.top_k <= 0:
@@ -237,29 +320,26 @@ def main() -> int:
             collection_name=args.collection_name,
         )
 
-    print(f"Query: {args.query}")
-    if collection_name:
-        print(f"Collection: {collection_name}")
-        print(f"Embedding model: {args.model}")
-    if "bm25" in retrieval_components:
-        print(f"BM25 index directory: {args.bm25_index_dir.as_posix()}")
-    print(f"Pipeline: {', '.join(retrieval_components)}")
-    print(f"Aggregation strategy: {args.aggregation_strategy}")
-    print(f"Final top-k: {args.top_k}")
-    print(f"Reranking enabled: {reranking_enabled}")
-    if reranking_enabled:
-        print(f"Reranker model: {args.reranker_model}")
-        print(f"Candidate-k per retriever: {effective_candidate_k}")
-    else:
-        print("Candidate-k per retriever: ignored")
-    if component_weights is not None:
-        print(f"Component weights: {component_weights}")
-    print(f"Metadata filters: {metadata_filters.to_description(metadata_filters_enabled)}")
-    print(
-        "Topic filter: "
-        f"{_describe_topic_filter(DEFAULT_TOPIC_FILTER, enabled=not args.disable_topic_filter)}"
+    print_retrieval_settings(
+        query=args.query,
+        collection_name=collection_name,
+        model_name=args.model,
+        bm25_index_dir=args.bm25_index_dir,
+        retrieval_components=retrieval_components,
+        aggregation_strategy=args.aggregation_strategy,
+        top_k=args.top_k,
+        reranking_enabled=reranking_enabled,
+        reranker_model=args.reranker_model,
+        effective_candidate_k=effective_candidate_k,
+        component_weights=component_weights,
+        metadata_filter_description=metadata_filters.to_description(
+            metadata_filters_enabled
+        ),
+        topic_filter_description=_describe_topic_filter(
+            DEFAULT_TOPIC_FILTER,
+            enabled=not args.disable_topic_filter,
+        ),
     )
-    print()
 
     chroma_retriever = None
     if "chroma" in retrieval_components:
@@ -308,19 +388,7 @@ def main() -> int:
         print()
 
     for result in results:
-        preview = " ".join(result.text.split())[:500]
-        rerank_score = result.metadata.get("rerank_score")
-
-        print(f"{result.rank}. {result.title}")
-        print(f"   Chunk: {result.chunk_id}")
-        print(f"   Section: {result.section}")
-        if rerank_score is not None:
-            print(f"   Rerank score: {float(rerank_score):.4f}")
-        print(f"   Distance: {result.distance:.4f}")
-        print(f"   Source: {result.source_url}")
-        print(f"   Metadata: {result.metadata}")
-        print(f"   Preview: {preview}")
-        print()
+        print_retrieved_chunk(result)
 
     return 0
 
