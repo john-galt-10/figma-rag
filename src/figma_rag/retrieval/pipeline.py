@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isclose
 from typing import Protocol
 
@@ -15,6 +15,7 @@ from .aggregation import (
 from .bm25 import BM25Retriever
 from .chroma import ChromaRetriever, RetrievalResult
 from .filters import MetadataFilterSet
+from .reranking import RerankingResult
 
 DEFAULT_RETRIEVAL_COMPONENTS = ("chroma", "bm25")
 WEIGHT_SUM_TOLERANCE = 1e-9
@@ -26,6 +27,7 @@ class RetrievalRequest:
 
     query: str
     top_k: int
+    candidate_k: int | None = None
     metadata_filters: MetadataFilterSet = MetadataFilterSet()
     metadata_filters_enabled: bool = True
     raw_chroma_where: dict | None = None
@@ -62,6 +64,20 @@ class RetrievalComponent(Protocol):
 
     def retrieve(self, request: RetrievalRequest) -> list[RetrievalResult]:
         """Return ranked results for the request."""
+
+
+class Reranker(Protocol):
+    """Protocol implemented by post-retrieval reranking components."""
+
+    model_name: str
+
+    def rerank(
+        self,
+        query: str,
+        results: list[RetrievalResult],
+        top_k: int,
+    ) -> RerankingResult:
+        """Return reranked results for a query and candidate list."""
 
 
 class ChromaRetrievalComponent:
@@ -110,6 +126,7 @@ class RetrievalPipeline:
         components: list[RetrievalComponent],
         aggregation_strategy: AggregationStrategy | None = None,
         component_weights: dict[str, float] | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         if not components:
             raise ValueError("at least one retrieval component is required")
@@ -122,10 +139,17 @@ class RetrievalPipeline:
             and self.aggregation_strategy.name != "weighted_rrf"
         ):
             raise ValueError("component weights are only supported with weighted_rrf")
-        self.component_weights = normalize_component_weights(
-            component_names=self.component_names,
-            component_weights=component_weights,
+        self.component_weights = (
+            normalize_component_weights(
+                component_names=self.component_names,
+                component_weights=component_weights,
+            )
+            if self.aggregation_strategy.name == "weighted_rrf"
+            else None
         )
+        self.reranker = reranker
+        self.last_reranking_result: RerankingResult | None = None
+        self.last_candidate_k: int | None = None
 
     @property
     def component_names(self) -> list[str]:
@@ -136,19 +160,48 @@ class RetrievalPipeline:
     def retrieve(self, request: RetrievalRequest) -> list[RetrievalResult]:
         """Run retrieval components and return ranked results."""
 
-        if len(self.components) == 1:
-            return self.components[0].retrieve(request)
+        self.last_reranking_result = None
+        self.last_candidate_k = None
 
-        component_results = [
-            component.retrieve(request) for component in self.components
-        ]
-        return aggregate_retrieval_results(
-            component_results=component_results,
-            component_names=self.component_names,
+        if self.reranker is None:
+            if len(self.components) == 1:
+                return self.components[0].retrieve(request)
+
+            component_results = [
+                component.retrieve(request) for component in self.components
+            ]
+            return aggregate_retrieval_results(
+                component_results=component_results,
+                component_names=self.component_names,
+                top_k=request.top_k,
+                aggregation_strategy=self.aggregation_strategy,
+                component_weights=self.component_weights,
+            )
+
+        candidate_k = resolve_candidate_k(request)
+        self.last_candidate_k = candidate_k
+        candidate_request = replace(request, top_k=candidate_k)
+
+        if len(self.components) == 1:
+            candidates = self.components[0].retrieve(candidate_request)
+        else:
+            component_results = [
+                component.retrieve(candidate_request) for component in self.components
+            ]
+            candidates = aggregate_retrieval_results(
+                component_results=component_results,
+                component_names=self.component_names,
+                top_k=candidate_k,
+                aggregation_strategy=self.aggregation_strategy,
+                component_weights=self.component_weights,
+            )
+
+        self.last_reranking_result = self.reranker.rerank(
+            query=request.query,
+            results=candidates,
             top_k=request.top_k,
-            aggregation_strategy=self.aggregation_strategy,
-            component_weights=self.component_weights,
         )
+        return self.last_reranking_result.results
 
     def to_description(self) -> dict:
         """Return a JSON-serializable description of the pipeline."""
@@ -160,8 +213,12 @@ class RetrievalPipeline:
             else "hybrid",
             "aggregation_strategy": self.aggregation_strategy.name,
             "component_weights": dict(self.component_weights)
-            if len(self.components) > 1
+            if len(self.components) > 1 and self.component_weights is not None
             else None,
+            "reranking": {
+                "enabled": self.reranker is not None,
+                "model": self.reranker.model_name if self.reranker else None,
+            },
         }
 
 
@@ -210,6 +267,7 @@ def build_retrieval_pipeline(
     bm25_retriever: BM25Retriever | None = None,
     aggregation_strategy_name: str = DEFAULT_AGGREGATION_STRATEGY,
     component_weights: dict[str, float] | None = None,
+    reranker: Reranker | None = None,
 ) -> RetrievalPipeline:
     """Build a retrieval pipeline from enabled component names."""
 
@@ -240,7 +298,22 @@ def build_retrieval_pipeline(
         components=components,
         aggregation_strategy=aggregation_strategy,
         component_weights=component_weights,
+        reranker=reranker,
     )
+
+
+def resolve_candidate_k(request: RetrievalRequest) -> int:
+    """Return the reranking candidate count for each enabled retriever."""
+
+    if request.top_k <= 0:
+        raise ValueError("top_k must be greater than zero")
+
+    candidate_k = request.candidate_k if request.candidate_k is not None else (
+        request.top_k * 5
+    )
+    if candidate_k <= 0:
+        raise ValueError("candidate_k must be greater than zero")
+    return candidate_k
 
 
 def parse_component_weights(

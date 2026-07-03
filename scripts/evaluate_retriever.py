@@ -27,6 +27,8 @@ from figma_rag.evaluation import (  # noqa: E402
 from figma_rag.retrieval import (  # noqa: E402
     BM25Retriever,
     ChromaRetriever,
+    CrossEncoderReranker,
+    DEFAULT_RERANKER_MODEL,
     DEFAULT_RETRIEVAL_COMPONENTS,
     RetrievalRequest,
     available_aggregation_strategies,
@@ -102,6 +104,26 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=[1, 3, 5, 9, 15, 20],
         help="One or more retrieval cutoffs to evaluate, such as --top-k 1 3 5 10.",
+    )
+    parser.add_argument(
+        "--candidate-k",
+        type=int,
+        default=None,
+        help=(
+            "Number of candidates retrieved by each retriever before reranking. "
+            "Defaults to max(--top-k) * 5 when reranking is enabled and is "
+            "ignored when reranking is disabled."
+        ),
+    )
+    parser.add_argument(
+        "--disable-reranking",
+        action="store_true",
+        help="Disable cross-encoder reranking and evaluate the retrieval ranking directly.",
+    )
+    parser.add_argument(
+        "--reranker-model",
+        default=DEFAULT_RERANKER_MODEL,
+        help="Sentence Transformers CrossEncoder model used for reranking.",
     )
     parser.add_argument(
         "--output-dir",
@@ -215,6 +237,15 @@ def main() -> int:
     args = parser.parse_args()
     seed_settings = set_reproducibility_seed(args.seed)
     top_k_values = normalize_top_k_values(args.top_k)
+    max_top_k = max(top_k_values)
+    reranking_enabled = not args.disable_reranking
+    if reranking_enabled and args.candidate_k is not None and args.candidate_k <= 0:
+        raise ValueError("--candidate-k must be greater than zero")
+    effective_candidate_k = (
+        None
+        if not reranking_enabled
+        else args.candidate_k or max_top_k * 5
+    )
 
     try:
         metadata_filters = parse_metadata_filter_set(args.metadata_filter)
@@ -224,15 +255,29 @@ def main() -> int:
     metadata_filters_enabled = not args.disable_metadata_filters
     topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
     retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)
-    if args.component_weight and args.aggregation_strategy != "weighted_rrf":
-        parser.error("--component-weight is only supported with weighted_rrf aggregation")
-    try:
-        component_weights = parse_component_weights(
-            args.component_weight,
-            retrieval_components,
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
+
+    if args.aggregation_strategy == "union":
+        if args.component_weight:
+            print(
+                "Warning: --component-weight values are ignored because "
+                "--aggregation-strategy is union.",
+                file=sys.stderr,
+            )
+        component_weights = None
+    elif args.aggregation_strategy == "weighted_rrf":
+        try:
+            component_weights = parse_component_weights(
+                args.component_weight,
+                retrieval_components,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        if args.component_weight:
+            parser.error(
+                "--component-weight is only supported with weighted_rrf aggregation"
+            )
+        component_weights = None
 
     test_set_examples = load_retrieval_test_set(args.test_set_path)
 
@@ -246,6 +291,11 @@ def main() -> int:
     bm25_retriever = None
     if "bm25" in retrieval_components:
         bm25_retriever = BM25Retriever(index_dir=args.bm25_index_dir)
+    reranker = (
+        CrossEncoderReranker(model_name=args.reranker_model)
+        if reranking_enabled
+        else None
+    )
     try:
         pipeline = build_retrieval_pipeline(
             component_names=retrieval_components,
@@ -253,17 +303,25 @@ def main() -> int:
             bm25_retriever=bm25_retriever,
             aggregation_strategy_name=args.aggregation_strategy,
             component_weights=component_weights,
+            reranker=reranker,
         )
     except ValueError as exc:
         parser.error(str(exc))
 
-    max_top_k = max(top_k_values)
     retrieved_chunk_ids_by_query_id = {}
     retrieved_component_ranks_by_query_id = {}
+    reranking_latencies_seconds: list[float] = []
 
     print("+-----------------------------------------------------------------------+")
     print("Evaluating Retriever performance w/ the following settings:")
     print(f"Pipeline: {pipeline.to_description()}")
+    print(f"Final top-k values: {top_k_values}")
+    print(f"Reranking enabled: {reranking_enabled}")
+    if reranking_enabled:
+        print(f"Reranker model: {args.reranker_model}")
+        print(f"Candidate-k per retriever: {effective_candidate_k}")
+    else:
+        print("Candidate-k per retriever: ignored")
     print(f"Metadata filters: {[fil.to_description() for fil in metadata_filters.filters]}")
     print(
         "Topic filter: "
@@ -275,11 +333,16 @@ def main() -> int:
         request = RetrievalRequest(
             query=example.query,
             top_k=max_top_k,
+            candidate_k=effective_candidate_k,
             metadata_filters=metadata_filters,
             metadata_filters_enabled=metadata_filters_enabled,
             raw_chroma_where=topic_filter,
         )
         results = stabilize_retrieval_ties(pipeline.retrieve(request))
+        if pipeline.last_reranking_result:
+            reranking_latencies_seconds.append(
+                pipeline.last_reranking_result.latency_seconds
+            )
         retrieved_chunk_ids_by_query_id[example.query_id] = [
             result.chunk_id for result in results
         ]
@@ -326,6 +389,13 @@ def main() -> int:
             else None,
             "model": args.model,
             "retrieval_pipeline": pipeline.to_description(),
+            "reranking": _reranking_metadata(
+                enabled=reranking_enabled,
+                model_name=args.reranker_model,
+                top_k_values=top_k_values,
+                candidate_k=effective_candidate_k,
+                latencies_seconds=reranking_latencies_seconds,
+            ),
             "metadata_filters": metadata_filters.to_description(
                 enabled=metadata_filters_enabled
             ),
@@ -383,16 +453,33 @@ def _component_rank_details(results: list, component_names: list[str]) -> list[d
         distances = result.metadata.get("retrieval_component_distances")
         if not isinstance(ranks, dict):
             ranks = (
-                {component_names[0]: result.rank}
+                {
+                    component_names[0]: result.metadata.get(
+                        "reranking_original_rank",
+                        result.rank,
+                    )
+                }
                 if len(component_names) == 1
                 else {}
             )
+        else:
+            ranks = dict(ranks)
         if not isinstance(distances, dict):
             distances = (
-                {component_names[0]: result.distance}
+                {
+                    component_names[0]: result.metadata.get(
+                        "reranking_original_distance",
+                        result.distance,
+                    )
+                }
                 if len(component_names) == 1
                 else {}
             )
+        else:
+            distances = dict(distances)
+        if "rerank_score" in result.metadata:
+            ranks["reranker"] = result.rank
+            distances["reranker"] = result.distance
         details.append(
             {
                 "chunk_id": result.chunk_id,
@@ -401,6 +488,45 @@ def _component_rank_details(results: list, component_names: list[str]) -> list[d
             }
         )
     return details
+
+
+def _reranking_metadata(
+    enabled: bool,
+    model_name: str,
+    top_k_values: list[int],
+    candidate_k: int | None,
+    latencies_seconds: list[float],
+) -> dict:
+    """Return JSON-friendly reranking configuration and latency summary."""
+
+    return {
+        "enabled": enabled,
+        "model": model_name if enabled else None,
+        "top_k_values": top_k_values,
+        "candidate_k": candidate_k,
+        "latency_seconds": _latency_summary(latencies_seconds),
+    }
+
+
+def _latency_summary(latencies_seconds: list[float]) -> dict:
+    """Summarize per-query reranking latencies."""
+
+    if not latencies_seconds:
+        return {
+            "total": 0.0,
+            "average": None,
+            "min": None,
+            "max": None,
+            "count": 0,
+        }
+
+    return {
+        "total": sum(latencies_seconds),
+        "average": sum(latencies_seconds) / len(latencies_seconds),
+        "min": min(latencies_seconds),
+        "max": max(latencies_seconds),
+        "count": len(latencies_seconds),
+    }
 
 
 def _collection_metadata(retriever: ChromaRetriever) -> dict:

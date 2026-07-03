@@ -14,6 +14,8 @@ if str(SRC_ROOT) not in sys.path:
 from figma_rag.retrieval import (
     BM25Retriever,
     ChromaRetriever,
+    CrossEncoderReranker,
+    DEFAULT_RERANKER_MODEL,
     DEFAULT_RETRIEVAL_COMPONENTS,
     RetrievalRequest,
     available_aggregation_strategies,
@@ -92,6 +94,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="Number of nearest chunks to return.",
+    )
+    parser.add_argument(
+        "--candidate-k",
+        type=int,
+        default=None,
+        help=(
+            "Number of candidates retrieved by each retriever before reranking. "
+            "Defaults to --top-k * 5 when reranking is enabled and is ignored "
+            "when reranking is disabled."
+        ),
+    )
+    parser.add_argument(
+        "--disable-reranking",
+        action="store_true",
+        help="Disable cross-encoder reranking and return the retrieval ranking directly.",
+    )
+    parser.add_argument(
+        "--reranker-model",
+        default=DEFAULT_RERANKER_MODEL,
+        help="Sentence Transformers CrossEncoder model used for reranking.",
     )
     parser.add_argument(
         "--metadata-filter",
@@ -176,15 +198,36 @@ def main() -> int:
     metadata_filters_enabled = not args.disable_metadata_filters
     topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
     retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)
-    if args.component_weight and args.aggregation_strategy != "weighted_rrf":
-        parser.error("--component-weight is only supported with weighted_rrf aggregation")
-    try:
-        component_weights = parse_component_weights(
-            args.component_weight,
-            retrieval_components,
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
+    reranking_enabled = not args.disable_reranking
+    if reranking_enabled and args.candidate_k is not None and args.candidate_k <= 0:
+        raise ValueError("--candidate-k must be greater than zero")
+    effective_candidate_k = (
+        None
+        if not reranking_enabled
+        else args.candidate_k or args.top_k * 5
+    )
+    if args.aggregation_strategy == "union":
+        if args.component_weight:
+            print(
+                "Warning: --component-weight values are ignored because "
+                "--aggregation-strategy is union.",
+                file=sys.stderr,
+            )
+        component_weights = None
+    elif args.aggregation_strategy == "weighted_rrf":
+        try:
+            component_weights = parse_component_weights(
+                args.component_weight,
+                retrieval_components,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        if args.component_weight:
+            parser.error(
+                "--component-weight is only supported with weighted_rrf aggregation"
+            )
+        component_weights = None
 
     collection_name = None
     if "chroma" in retrieval_components:
@@ -202,6 +245,13 @@ def main() -> int:
         print(f"BM25 index directory: {args.bm25_index_dir.as_posix()}")
     print(f"Pipeline: {', '.join(retrieval_components)}")
     print(f"Aggregation strategy: {args.aggregation_strategy}")
+    print(f"Final top-k: {args.top_k}")
+    print(f"Reranking enabled: {reranking_enabled}")
+    if reranking_enabled:
+        print(f"Reranker model: {args.reranker_model}")
+        print(f"Candidate-k per retriever: {effective_candidate_k}")
+    else:
+        print("Candidate-k per retriever: ignored")
     if component_weights is not None:
         print(f"Component weights: {component_weights}")
     print(f"Metadata filters: {metadata_filters.to_description(metadata_filters_enabled)}")
@@ -221,6 +271,11 @@ def main() -> int:
     bm25_retriever = None
     if "bm25" in retrieval_components:
         bm25_retriever = BM25Retriever(index_dir=args.bm25_index_dir)
+    reranker = (
+        CrossEncoderReranker(model_name=args.reranker_model)
+        if reranking_enabled
+        else None
+    )
     try:
         pipeline = build_retrieval_pipeline(
             component_names=retrieval_components,
@@ -228,6 +283,7 @@ def main() -> int:
             bm25_retriever=bm25_retriever,
             aggregation_strategy_name=args.aggregation_strategy,
             component_weights=component_weights,
+            reranker=reranker,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -236,18 +292,30 @@ def main() -> int:
         RetrievalRequest(
             query=args.query,
             top_k=args.top_k,
+            candidate_k=effective_candidate_k,
             metadata_filters=metadata_filters,
             metadata_filters_enabled=metadata_filters_enabled,
             raw_chroma_where=topic_filter,
         )
     )
+    if pipeline.last_reranking_result:
+        latency_ms = pipeline.last_reranking_result.latency_seconds * 1000
+        print(
+            "Reranking latency: "
+            f"{latency_ms:.2f} ms for "
+            f"{pipeline.last_reranking_result.candidate_count} candidates"
+        )
+        print()
 
     for result in results:
         preview = " ".join(result.text.split())[:500]
+        rerank_score = result.metadata.get("rerank_score")
 
         print(f"{result.rank}. {result.title}")
         print(f"   Chunk: {result.chunk_id}")
         print(f"   Section: {result.section}")
+        if rerank_score is not None:
+            print(f"   Rerank score: {float(rerank_score):.4f}")
         print(f"   Distance: {result.distance:.4f}")
         print(f"   Source: {result.source_url}")
         print(f"   Metadata: {result.metadata}")

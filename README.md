@@ -101,6 +101,9 @@ The current plan is to build the system in stages:
 * **⚡ 2026-07-02: Hybrid retrieval aggregation**  
   Added aggregation logic to combine retrieval outputs, enabling hybrid search experiments over semantic and lexical retrieval results.
 
+* **📈 2026-07-03: Reranking experiments and retrieval metric visualization**  
+  Added optional cross-encoder reranking to the retrieval pipeline, evaluation script, and retrieval example, with candidate-k controls, rerank score metadata, latency summaries, and plotting utilities for comparing aggregate retrieval metrics.
+
 ## Build the local vector index
 
 From the `figma-navigator` environment, build the persistent Chroma collection:

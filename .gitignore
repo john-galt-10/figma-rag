@@ -5,3 +5,4 @@ __pycache__/
 *$py.class
 scripts/generate_md_from_help_center.py
 analysis/plots/
+analysis/inputs/

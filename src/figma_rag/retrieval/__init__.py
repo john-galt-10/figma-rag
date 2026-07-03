@@ -16,6 +16,7 @@ from .pipeline import (
     BM25RetrievalComponent,
     ChromaRetrievalComponent,
     DEFAULT_RETRIEVAL_COMPONENTS,
+    Reranker,
     RetrievalComponent,
     RetrievalPipeline,
     RetrievalRequest,
@@ -23,6 +24,12 @@ from .pipeline import (
     build_retrieval_pipeline,
     normalize_component_weights,
     parse_component_weights,
+    resolve_candidate_k,
+)
+from .reranking import (
+    DEFAULT_RERANKER_MODEL,
+    CrossEncoderReranker,
+    RerankingResult,
 )
 
 __all__ = [
@@ -33,9 +40,13 @@ __all__ = [
     "AggregationStrategy",
     "ComponentRetrievalResults",
     "DEFAULT_AGGREGATION_STRATEGY",
+    "DEFAULT_RERANKER_MODEL",
     "DEFAULT_RETRIEVAL_COMPONENTS",
+    "CrossEncoderReranker",
     "MetadataFilter",
     "MetadataFilterSet",
+    "Reranker",
+    "RerankingResult",
     "RetrievalComponent",
     "RetrievalPipeline",
     "RetrievalRequest",
@@ -49,5 +60,6 @@ __all__ = [
     "normalize_component_weights",
     "parse_component_weights",
     "parse_metadata_filter_set",
+    "resolve_candidate_k",
     "resolve_collection_name",
 ]
