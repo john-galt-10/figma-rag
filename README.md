@@ -104,6 +104,9 @@ The current plan is to build the system in stages:
 * **📈 2026-07-03: Reranking experiments and retrieval metric visualization**  
   Added optional cross-encoder reranking to the retrieval pipeline, evaluation script, and retrieval example, with candidate-k controls, rerank score metadata, latency summaries, and plotting utilities for comparing aggregate retrieval metrics.
 
+* **2026-07-04: YAML-configured answer generation baseline**  
+  Added a grounded answer generation example that reuses the retrieval pipeline, reads retrieval and inference settings from YAML, and calls GitHub Models through the OpenAI-compatible SDK.
+
 ## Build the local vector index
 
 From the `figma-navigator` environment, build the persistent Chroma collection:
@@ -129,6 +132,20 @@ python scripts/retrieval_example.py "How do variables work in prototypes?"
 ```
 
 The example uses the reusable Chroma retriever in `src/figma_rag/retrieval/`: it embeds the query with the selected Sentence Transformers model, searches the matching Chroma collection, optionally reranks candidates with the selected cross-encoder, and prints the nearest chunks with source metadata. Use `--chunks-path` and `--model` to target a specific indexed collection, `--collection-name` to override the generated collection name, `--reranker-model` to choose the cross-encoder, and `--top-k` to choose how many chunks to return.
+
+Generate a grounded answer with the YAML-configured generation example:
+
+```powershell
+python scripts/generate_answer.py "How do variables work in prototypes?"
+```
+
+The only CLI parameter is the query. The script reads retrieval, prompt, and model-provider settings from `scripts/generate_answer_config.yaml`; by default it uses the hybrid Chroma and BM25 retriever, optional cross-encoder reranking, and `openai/gpt-4.1-mini` through the GitHub Models endpoint. Store the GitHub Models token in `.env` as:
+
+```dotenv
+GITHUB_TOKEN=your_token_here
+```
+
+The script prints the request options in cyan, then the retrieved chunks in grey, then the generated answer. To switch models or providers later, edit the `generation` section of the YAML file; only the OpenAI-compatible provider is implemented for now. It expects `openai`, `PyYAML`, `python-dotenv`, and `colorama` to be available in the active environment.
 
 ## Repository intent
 
