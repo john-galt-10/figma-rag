@@ -137,7 +137,7 @@ If you start from a manually annotated file that only has `relevant_url` and `re
 ### 2. Map document-level labels to chunk-level labels
 
 ```powershell
-python scripts\map_relevant_chunks.py --test-set-path data\eval\golden_set.json --chunks-path data\processed\figma_docs\chunks_hierarchical_bge-small-en-v1.5_t320_o40_20260626-1212.jsonl
+python scripts\map_relevant_chunks.py --test-set-path data\eval\golden_set.json --chunks-path data\processed\figma_docs\chunks_hierarchical_bge-small-en-v1.5_t320_o40_20260630-1601.jsonl
 ```
 
 Input:

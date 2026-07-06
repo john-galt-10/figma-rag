@@ -7,3 +7,4 @@ __pycache__/
 scripts/generate_md_from_help_center.py
 analysis/plots/
 analysis/inputs/
+codex_annotation

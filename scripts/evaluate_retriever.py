@@ -44,7 +44,8 @@ DEFAULT_TEST_SET_PATH = (
     / "data"
     / "eval"
     / "retrieval_test"
-    / "golden_set_manual_2_complete_20260701_1753_relevant_chunks_hierarchical_bge-small-en-v1.5_20260629-1709.jsonl"
+    # / "golden_set_manual_2_complete_20260701_1753_relevant_chunks_hierarchical_bge-small-en-v1.5_20260629-1709.jsonl"
+    / "golden_set_manual_and_codex_relevant_chunks_hierarchical_bge-small-en-v1.5_20260630-1601.jsonl"
 )
 DEFAULT_PERSIST_DIR = REPO_ROOT / "data" / "processed" / "figma_docs" / "chroma"
 DEFAULT_BM25_INDEX_DIR = (
@@ -298,6 +299,7 @@ def main() -> int:
     init(autoreset=True)
     parser = build_parser()
     args = parser.parse_args()
+    print(f"Evaluating the retriever performance on: {args.test_set_path}")
     seed_settings = set_reproducibility_seed(args.seed)
     top_k_values = normalize_top_k_values(args.top_k)
     max_top_k = max(top_k_values)
@@ -314,7 +316,6 @@ def main() -> int:
         metadata_filters = parse_metadata_filter_set(args.metadata_filter)
     except ValueError as exc:
         parser.error(str(exc))
-
     metadata_filters_enabled = not args.disable_metadata_filters
     topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
     retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)

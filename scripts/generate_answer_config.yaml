@@ -1,0 +1,48 @@
+retrieval:
+  chunks_path: data\processed\figma_docs\chunks_hierarchical_bge-small-en-v1.5_t320_o40_20260630-1601.jsonl
+  chroma_persist_dir: data/processed/figma_docs/chroma
+  collection_name: hierarchical-bge-w-topic
+  embedding_model: BAAI/bge-small-en-v1.5
+  bm25_index_dir: data/processed/bm25/hierarchical_bge-small-en-v1.5_t320_o40_bm25_stemmed_english_20260701t1733
+  top_k: 5
+  candidate_k: 20
+  reranking:
+    enabled: true
+    model: cross-encoder/ms-marco-MiniLM-L6-v2
+  metadata_filters_enabled: true
+  metadata_filters:
+    - token_count>30
+  topic_filter:
+    enabled: true
+    where:
+      topic:
+        "$in":
+          - Figma Design
+          - Administration
+          - Help
+          - Community
+          - Work across Figma
+          - Get Started
+  components:
+    - chroma
+    - bm25
+  aggregation_strategy: weighted_rrf
+  component_weights:
+
+generation:
+  provider: openai
+  model: openai/gpt-4.1-mini
+  base_url: https://models.github.ai/inference
+  api_key_env: GITHUB_MODELS_TOKEN
+  temperature: 0.3
+  top_p: 1
+  max_tokens:
+
+prompt:
+  system: >-
+    You are a Figma documentation assistant. Answer clearly and ground your
+    response in the retrieved official Figma documentation. Mention source
+    numbers such as [1] when a specific retrieved chunk supports the answer. 
+    Your answers must be based entirely on the content of the provided in the
+    retrieved chunks, not on your own memory.
+  max_chunk_chars: 1600
