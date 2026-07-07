@@ -38,6 +38,15 @@ generation:
   top_p: 1
   max_tokens:
 
+judge:
+  provider: openai
+  model: openai/gpt-4.1
+  base_url: https://models.github.ai/inference
+  api_key_env: GITHUB_MODELS_TOKEN
+  temperature: 0
+  top_p: 1
+  max_tokens:
+
 prompt:
   system: >-
     You are a Figma documentation assistant. Answer clearly and ground your

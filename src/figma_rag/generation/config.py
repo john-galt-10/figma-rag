@@ -57,6 +57,7 @@ class AnswerGenerationConfig:
 
     retrieval: RetrievalConfig
     generation: GenerationModelConfig
+    judge: GenerationModelConfig
     prompt: PromptConfig
 
 
@@ -79,9 +80,13 @@ def load_answer_generation_config(path: Path, repo_root: Path) -> AnswerGenerati
     if not isinstance(payload, dict):
         raise ValueError(f"Generation config must be a YAML mapping: {path}")
 
+    generation = _parse_generation_config(payload.get("generation"))
+    judge = _parse_judge_config(payload.get("judge"), generation)
+
     return AnswerGenerationConfig(
         retrieval=_parse_retrieval_config(payload.get("retrieval"), repo_root),
-        generation=_parse_generation_config(payload.get("generation")),
+        generation=generation,
+        judge=judge,
         prompt=_parse_prompt_config(payload.get("prompt")),
     )
 
@@ -155,7 +160,24 @@ def _parse_retrieval_config(value: object, repo_root: Path) -> RetrievalConfig:
 def _parse_generation_config(value: object) -> GenerationModelConfig:
     """Parse and validate the generation section of the YAML config."""
 
-    section = _require_mapping(value, "generation")
+    return _parse_model_config(value, "generation")
+
+
+def _parse_judge_config(
+    value: object,
+    generation_config: GenerationModelConfig,
+) -> GenerationModelConfig:
+    """Parse the optional judge section or reuse generation settings."""
+
+    if value is None:
+        return generation_config
+    return _parse_model_config(value, "judge")
+
+
+def _parse_model_config(value: object, section_name: str) -> GenerationModelConfig:
+    """Parse and validate one model-provider section of the YAML config."""
+
+    section = _require_mapping(value, section_name)
     known_keys = {
         "provider",
         "model",
@@ -172,13 +194,22 @@ def _parse_generation_config(value: object) -> GenerationModelConfig:
     }
 
     return GenerationModelConfig(
-        provider=_require_string(section.get("provider"), "generation.provider"),
-        model=_require_string(section.get("model"), "generation.model"),
-        base_url=_require_string(section.get("base_url"), "generation.base_url"),
-        api_key_env=_require_string(section.get("api_key_env"), "generation.api_key_env"),
-        temperature=_optional_float(section.get("temperature"), "generation.temperature"),
-        top_p=_optional_float(section.get("top_p"), "generation.top_p"),
-        max_tokens=_optional_positive_int(section.get("max_tokens"), "generation.max_tokens"),
+        provider=_require_string(section.get("provider"), f"{section_name}.provider"),
+        model=_require_string(section.get("model"), f"{section_name}.model"),
+        base_url=_require_string(section.get("base_url"), f"{section_name}.base_url"),
+        api_key_env=_require_string(
+            section.get("api_key_env"),
+            f"{section_name}.api_key_env",
+        ),
+        temperature=_optional_float(
+            section.get("temperature"),
+            f"{section_name}.temperature",
+        ),
+        top_p=_optional_float(section.get("top_p"), f"{section_name}.top_p"),
+        max_tokens=_optional_positive_int(
+            section.get("max_tokens"),
+            f"{section_name}.max_tokens",
+        ),
         extra_options=extra_options,
     )
 
