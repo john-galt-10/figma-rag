@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,6 +28,7 @@ from .judge import (
 )
 from .rag_dataset import load_jsonl
 from .retrieval import RetrievalQueryExample, sha256_file
+from .time import evaluation_now
 
 
 @dataclass(frozen=True)
@@ -256,7 +256,7 @@ def build_generation_summary_payload(
             "query_count": len(rows),
             "successful_judgment_count": len(successful_rows),
             "failed_judgment_count": len(failed_rows),
-            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "created_at": evaluation_now().isoformat(timespec="seconds"),
             "generation": model_config_metadata(config.generation),
             "judge": model_config_metadata(config.judge),
             "retrieval": {

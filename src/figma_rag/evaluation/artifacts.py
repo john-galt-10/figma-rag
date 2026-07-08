@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .time import evaluation_now
 
 
 def build_generation_output_paths(
@@ -15,7 +16,7 @@ def build_generation_output_paths(
 ) -> tuple[Path, Path, Path]:
     """Return details, summary, and optional JSONL output paths."""
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
+    timestamp = evaluation_now().strftime("%Y%m%dT%H%M")
     label = slugify(test_set_path.stem)
     details_path = output_dir / f"generation_details_{label}_{timestamp}.parquet"
     summary_path = output_dir / f"generation_metrics_{label}_{timestamp}.json"

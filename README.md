@@ -107,6 +107,9 @@ The current plan is to build the system in stages:
 * **2026-07-04: YAML-configured answer generation baseline**  
   Added a grounded answer generation example that reuses the retrieval pipeline, reads retrieval and inference settings from YAML, and calls GitHub Models through the OpenAI-compatible SDK.
 
+* **🧪 2026-07-08: RAG answer evaluation pipeline**  
+  Added evaluation-set validation, YAML-configured judge settings, structured LLM-as-judge scoring for context relevance, groundedness, and answer relevance, plus Parquet, JSONL, and aggregate metrics outputs for generation evaluation runs.
+
 ## Build the local vector index
 
 From the `figma-navigator` environment, build the persistent Chroma collection:
