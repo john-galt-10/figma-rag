@@ -29,14 +29,12 @@ from figma_rag.evaluation import (  # noqa: E402
 from figma_rag.retrieval import (  # noqa: E402
     BM25Retriever,
     ChromaRetriever,
-    CrossEncoderReranker,
-    DEFAULT_RERANKER_MODEL,
-    DEFAULT_RETRIEVAL_COMPONENTS,
+    RetrievalConfig,
+    RetrievalOptions,
     RetrievalRequest,
-    available_aggregation_strategies,
-    build_retrieval_pipeline,
-    parse_component_weights,
-    parse_metadata_filter_set,
+    build_configured_retrieval_pipeline,
+    load_retrieval_config,
+    resolve_retrieval_options,
 )
 
 DEFAULT_TEST_SET_PATH = (
@@ -47,20 +45,8 @@ DEFAULT_TEST_SET_PATH = (
     # / "golden_set_manual_2_complete_20260701_1753_relevant_chunks_hierarchical_bge-small-en-v1.5_20260629-1709.jsonl"
     / "golden_set_manual_and_codex_relevant_chunks_hierarchical_bge-small-en-v1.5_20260630-1601.jsonl"
 )
-DEFAULT_PERSIST_DIR = REPO_ROOT / "data" / "processed" / "figma_docs" / "chroma"
-DEFAULT_BM25_INDEX_DIR = (
-    REPO_ROOT
-    / "data"
-    / "processed"
-    / "bm25"
-    / "hierarchical_bge-small-en-v1.5_t320_o40_bm25_stemmed_english_20260701t1733"
-)
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("generate_answer_config.yaml")
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test" / "test_results"
-DEFAULT_METADATA_FILTERS = [
-    "token_count>30",
-    # "product=figma-design-or-general",
-]
-DEFAULT_TOPIC_FILTER = {"topic": {"$in": ["Figma Design", "Administration", "Help", "Community", "Work across Figma", "Get Started"]}}
 TEST_SET_FILENAME_PATTERN = re.compile(
     r"^.+?_relevant_chunks_(?P<label>.+?)_(?P<timestamp>\d{8}-\d{4})$"
 )
@@ -87,54 +73,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mapped retrieval test-set JSONL containing query and chunks fields.",
     )
     parser.add_argument(
-        "--persist-dir",
+        "--config-path",
         type=Path,
-        default=DEFAULT_PERSIST_DIR,
-        help="Directory containing the persistent Chroma database.",
-    )
-    parser.add_argument(
-        "--collection-name",
-        required=False,
-        default="hierarchical-bge-w-topic",
-        help="Name of the Chroma collection to query.",
-    )
-    parser.add_argument(
-        "--model",
-        default="BAAI/bge-small-en-v1.5",
-        help="Sentence Transformers model used to embed each query.",
-    )
-    parser.add_argument(
-        "--bm25-index-dir",
-        type=Path,
-        default=DEFAULT_BM25_INDEX_DIR,
-        help="Directory containing the persisted BM25 index.",
+        default=DEFAULT_CONFIG_PATH,
+        help="YAML config whose retrieval section defines the retrieval pipeline.",
     )
     parser.add_argument(
         "--top-k",
         type=int,
         nargs="+",
-        default=[1, 3, 5, 9, 15, 20],
-        help="One or more retrieval cutoffs to evaluate, such as --top-k 1 3 5 10.",
-    )
-    parser.add_argument(
-        "--candidate-k",
-        type=int,
         default=None,
         help=(
-            "Number of candidates retrieved by each retriever before reranking. "
-            "Defaults to max(--top-k) * 5 when reranking is enabled and is "
-            "ignored when reranking is disabled."
+            "One or more retrieval cutoffs to evaluate. Defaults to retrieval.top_k "
+            "from the YAML config when omitted."
         ),
-    )
-    parser.add_argument(
-        "--disable-reranking",
-        action="store_true",
-        help="Disable cross-encoder reranking and evaluate the retrieval ranking directly.",
-    )
-    parser.add_argument(
-        "--reranker-model",
-        default=DEFAULT_RERANKER_MODEL,
-        help="Sentence Transformers CrossEncoder model used for reranking.",
     )
     parser.add_argument(
         "--output-dir",
@@ -146,61 +98,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--save-details",
         action="store_true",
         help="Write detailed per-query results as a Parquet file.",
-    )
-    parser.add_argument(
-        "--metadata-filter",
-        action="append",
-        default=DEFAULT_METADATA_FILTERS.copy(),
-        metavar="FILTER",
-        help=(
-            "Metadata filter to apply before vector ranking. Supports =, !=, <, "
-            "<=, >, and >=. Can be repeated and filters are combined with AND. "
-            "Defaults to token_count>30 and product=figma-design-or-general. "
-            'Examples: --metadata-filter source_type=help_center --metadata-filter "token_count<80".'
-        ),
-    )
-    parser.add_argument(
-        "--disable-metadata-filters",
-        action="store_true",
-        help="Parse metadata filters but do not apply them during retrieval.",
-    )
-    parser.add_argument(
-        "--disable-topic-filter",
-        action="store_true",
-        help=(
-            "Do not restrict retrieval to the default Figma Design and "
-            "Administration topics."
-        ),
-    )
-    parser.add_argument(
-        "--retrieval-component",
-        action="append",
-        choices=["chroma", "bm25"],
-        default=None,
-        help=(
-            "Retrieval component to enable. Can be repeated. Defaults to chroma "
-            "and bm25 together."
-        ),
-    )
-    parser.add_argument(
-        "--aggregation-strategy",
-        choices=available_aggregation_strategies(),
-        default="weighted_rrf",
-        help=(
-            "Strategy used to combine multiple retrieval components. "
-            "Defaults to weighted_rrf."
-        ),
-    )
-    parser.add_argument(
-        "--component-weight",
-        action="append",
-        default=None,
-        metavar="COMPONENT=WEIGHT",
-        help=(
-            "Weighted RRF component weight. Can be repeated once per enabled "
-            "component, and weights must sum to 1.0. "
-            "Example: --component-weight chroma=0.5 --component-weight bm25=0.5."
-        ),
     )
     parser.add_argument(
         "--seed",
@@ -230,47 +127,53 @@ def build_output_paths(
     )
 
 
-def _describe_topic_filter(topic_filter: dict, enabled: bool = True) -> dict:
+def _describe_topic_filter(topic_filter: dict | None, enabled: bool = True) -> dict:
     """Return a JSON-serializable description of the default topic filter."""
 
+    if not topic_filter:
+        return {"enabled": enabled, "where": None}
     return {
         "enabled": enabled,
-        "field": "topic",
-        "operator": "in",
-        "values": topic_filter["topic"]["$in"],
+        "where": topic_filter,
     }
 
 
 def print_evaluation_settings(
     pipeline_description: dict,
+    config_path: Path,
+    config: RetrievalConfig,
+    options: RetrievalOptions,
     top_k_values: list[int],
-    reranking_enabled: bool,
-    reranker_model: str,
-    effective_candidate_k: int | None,
-    metadata_filter_descriptions: list[dict],
-    topic_filter_description: dict,
 ) -> None:
     """Print the evaluation settings block in green for terminal readability."""
 
     lines = [
         "Evaluating Retriever performance w/ the following settings:",
+        f"Config: {config_path}",
         f"Pipeline: {pipeline_description}",
         f"Final top-k values: {top_k_values}",
-        f"Reranking enabled: {reranking_enabled}",
+        f"Retrieval components: {', '.join(config.components)}",
+        f"Aggregation strategy: {config.aggregation_strategy}",
+        f"Component weights: {config.component_weights}",
+        f"Collection: {config.collection_name}",
+        f"Embedding model: {config.embedding_model}",
+        f"Chroma persist directory: {config.chroma_persist_dir.as_posix()}",
+        f"BM25 index directory: {config.bm25_index_dir.as_posix()}",
+        f"Reranking enabled: {config.reranking_enabled}",
     ]
-    if reranking_enabled:
+    if config.reranking_enabled:
         lines.extend(
             [
-                f"Reranker model: {reranker_model}",
-                f"Candidate-k per retriever: {effective_candidate_k}",
+                f"Reranker model: {config.reranker_model}",
+                f"Candidate-k per retriever: {options.candidate_k}",
             ]
         )
     else:
         lines.append("Candidate-k per retriever: ignored")
     lines.extend(
         [
-            f"Metadata filters: {metadata_filter_descriptions}",
-            f"Topic filter: {topic_filter_description}",
+            f"Metadata filters: {options.metadata_filters.to_description(options.metadata_filters_enabled)}",
+            f"Topic filter: {_describe_topic_filter(options.topic_filter, config.topic_filter_enabled)}",
         ]
     )
     print(Fore.CYAN + "\n".join(lines) + Style.RESET_ALL)
@@ -301,76 +204,28 @@ def main() -> int:
     args = parser.parse_args()
     print(f"Evaluating the retriever performance on: {args.test_set_path}")
     seed_settings = set_reproducibility_seed(args.seed)
-    top_k_values = normalize_top_k_values(args.top_k)
-    max_top_k = max(top_k_values)
-    reranking_enabled = not args.disable_reranking
-    if reranking_enabled and args.candidate_k is not None and args.candidate_k <= 0:
-        raise ValueError("--candidate-k must be greater than zero")
-    effective_candidate_k = (
-        None
-        if not reranking_enabled
-        else args.candidate_k or max_top_k * 5
-    )
 
     try:
-        metadata_filters = parse_metadata_filter_set(args.metadata_filter)
+        config = load_retrieval_config(args.config_path, REPO_ROOT)
     except ValueError as exc:
         parser.error(str(exc))
-    metadata_filters_enabled = not args.disable_metadata_filters
-    topic_filter = None if args.disable_topic_filter else DEFAULT_TOPIC_FILTER
-    retrieval_components = args.retrieval_component or list(DEFAULT_RETRIEVAL_COMPONENTS)
 
-    if args.aggregation_strategy == "union":
-        if args.component_weight:
-            print(
-                "Warning: --component-weight values are ignored because "
-                "--aggregation-strategy is union.",
-                file=sys.stderr,
-            )
-        component_weights = None
-    elif args.aggregation_strategy == "weighted_rrf":
-        try:
-            component_weights = parse_component_weights(
-                args.component_weight,
-                retrieval_components,
-            )
-        except ValueError as exc:
-            parser.error(str(exc))
-    else:
-        if args.component_weight:
-            parser.error(
-                "--component-weight is only supported with weighted_rrf aggregation"
-            )
-        component_weights = None
+    top_k_values = normalize_top_k_values(args.top_k or [config.top_k])
+    max_top_k = max(top_k_values)
+    try:
+        options = resolve_retrieval_options(config, top_k=max_top_k)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     test_set_examples = load_retrieval_test_set(args.test_set_path)
 
-    chroma_retriever = None
-    if "chroma" in retrieval_components:
-        chroma_retriever = ChromaRetriever(
-            persist_dir=args.persist_dir,
-            collection_name=args.collection_name,
-            model_name=args.model,
-        )
-    bm25_retriever = None
-    if "bm25" in retrieval_components:
-        bm25_retriever = BM25Retriever(index_dir=args.bm25_index_dir)
-    reranker = (
-        CrossEncoderReranker(model_name=args.reranker_model)
-        if reranking_enabled
-        else None
-    )
     try:
-        pipeline = build_retrieval_pipeline(
-            component_names=retrieval_components,
-            chroma_retriever=chroma_retriever,
-            bm25_retriever=bm25_retriever,
-            aggregation_strategy_name=args.aggregation_strategy,
-            component_weights=component_weights,
-            reranker=reranker,
-        )
+        pipeline = build_configured_retrieval_pipeline(config)
     except ValueError as exc:
         parser.error(str(exc))
+
+    chroma_retriever = _component_retriever(pipeline, "chroma")
+    bm25_retriever = _component_retriever(pipeline, "bm25")
 
     retrieved_chunk_ids_by_query_id = {}
     retrieved_component_ranks_by_query_id = {}
@@ -378,27 +233,20 @@ def main() -> int:
 
     print_evaluation_settings(
         pipeline_description=pipeline.to_description(),
+        config_path=args.config_path,
+        config=config,
+        options=options,
         top_k_values=top_k_values,
-        reranking_enabled=reranking_enabled,
-        reranker_model=args.reranker_model,
-        effective_candidate_k=effective_candidate_k,
-        metadata_filter_descriptions=[
-            fil.to_description() for fil in metadata_filters.filters
-        ],
-        topic_filter_description=_describe_topic_filter(
-            DEFAULT_TOPIC_FILTER,
-            enabled=not args.disable_topic_filter,
-        ),
     )
 
     for example in test_set_examples:
         request = RetrievalRequest(
             query=example.query,
             top_k=max_top_k,
-            candidate_k=effective_candidate_k,
-            metadata_filters=metadata_filters,
-            metadata_filters_enabled=metadata_filters_enabled,
-            raw_chroma_where=topic_filter,
+            candidate_k=options.candidate_k,
+            metadata_filters=options.metadata_filters,
+            metadata_filters_enabled=options.metadata_filters_enabled,
+            raw_chroma_where=options.topic_filter,
         )
         results = stabilize_retrieval_ties(pipeline.retrieve(request))
         if pipeline.last_reranking_result:
@@ -415,9 +263,9 @@ def main() -> int:
     representative_request = RetrievalRequest(
         query="metadata",
         top_k=max_top_k,
-        metadata_filters=metadata_filters,
-        metadata_filters_enabled=metadata_filters_enabled,
-        raw_chroma_where=topic_filter,
+        metadata_filters=options.metadata_filters,
+        metadata_filters_enabled=options.metadata_filters_enabled,
+        raw_chroma_where=options.topic_filter,
     )
 
     evaluation = evaluate_retrieval_results(
@@ -436,34 +284,36 @@ def main() -> int:
             "test_set_path": args.test_set_path.as_posix(),
             "test_set_path_resolved": args.test_set_path.resolve().as_posix(),
             "test_set_sha256": sha256_file(args.test_set_path),
-            "persist_dir": args.persist_dir.as_posix(),
-            "persist_dir_resolved": args.persist_dir.resolve().as_posix(),
-            "bm25_index_dir": args.bm25_index_dir.as_posix(),
-            "bm25_index_dir_resolved": args.bm25_index_dir.resolve().as_posix(),
+            "config_path": args.config_path.as_posix(),
+            "config_path_resolved": args.config_path.resolve().as_posix(),
+            "persist_dir": config.chroma_persist_dir.as_posix(),
+            "persist_dir_resolved": config.chroma_persist_dir.resolve().as_posix(),
+            "bm25_index_dir": config.bm25_index_dir.as_posix(),
+            "bm25_index_dir_resolved": config.bm25_index_dir.resolve().as_posix(),
             "output_dir": args.output_dir.as_posix(),
             "output_dir_resolved": args.output_dir.resolve().as_posix(),
-            "collection_name": args.collection_name,
+            "collection_name": config.collection_name,
             "collection": _collection_metadata(chroma_retriever)
             if chroma_retriever
             else None,
             "bm25_index": _bm25_index_metadata(bm25_retriever)
             if bm25_retriever
             else None,
-            "model": args.model,
+            "model": config.embedding_model,
             "retrieval_pipeline": pipeline.to_description(),
             "reranking": _reranking_metadata(
-                enabled=reranking_enabled,
-                model_name=args.reranker_model,
+                enabled=config.reranking_enabled,
+                model_name=config.reranker_model,
                 top_k_values=top_k_values,
-                candidate_k=effective_candidate_k,
+                candidate_k=options.candidate_k,
                 latencies_seconds=reranking_latencies_seconds,
             ),
-            "metadata_filters": metadata_filters.to_description(
-                enabled=metadata_filters_enabled
+            "metadata_filters": options.metadata_filters.to_description(
+                enabled=options.metadata_filters_enabled
             ),
             "topic_filter": _describe_topic_filter(
-                DEFAULT_TOPIC_FILTER,
-                enabled=not args.disable_topic_filter,
+                options.topic_filter,
+                enabled=config.topic_filter_enabled,
             ),
             "chroma_where": representative_request.chroma_where,
             "top_k_values": top_k_values,
@@ -498,6 +348,15 @@ def _artifact_label_and_timestamp(test_set_path: Path) -> tuple[str, str]:
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     return _slugify(stem), timestamp
+
+
+def _component_retriever(pipeline, component_name: str):
+    """Return the underlying retriever for a named pipeline component, if present."""
+
+    for component in pipeline.components:
+        if component.name == component_name:
+            return component.retriever
+    return None
 
 
 def _slugify(value: str) -> str:

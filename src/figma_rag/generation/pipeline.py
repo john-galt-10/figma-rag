@@ -6,32 +6,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from figma_rag.retrieval import (
-    BM25Retriever,
-    ChromaRetriever,
-    CrossEncoderReranker,
-    MetadataFilterSet,
     RetrievalPipeline,
+    RetrievalOptions as GenerationRetrievalOptions,
     RetrievalRequest,
     RetrievalResult,
-    build_retrieval_pipeline,
-    parse_metadata_filter_set,
-    resolve_collection_name,
+    build_configured_retrieval_pipeline as build_retrieval_pipeline_from_config,
+    resolve_retrieval_options,
 )
 
 from .config import AnswerGenerationConfig
 from .prompting import build_grounded_messages
 from .providers import ModelProvider, build_model_provider
-
-
-@dataclass(frozen=True)
-class GenerationRetrievalOptions:
-    """Resolved retrieval options used by answer generation requests."""
-
-    top_k: int
-    candidate_k: int | None
-    metadata_filters: MetadataFilterSet
-    metadata_filters_enabled: bool
-    topic_filter: dict | None
 
 
 @dataclass(frozen=True)
@@ -123,7 +108,7 @@ def build_answer_generation_pipeline(
 
     return AnswerGenerationPipeline(
         config=config,
-        retrieval_pipeline=build_configured_retrieval_pipeline(config),
+        retrieval_pipeline=build_retrieval_pipeline_from_config(config.retrieval),
         provider=build_model_provider(config.generation.provider),
         retrieval_options=resolve_generation_retrieval_options(config),
     )
@@ -134,38 +119,7 @@ def build_configured_retrieval_pipeline(
 ) -> RetrievalPipeline:
     """Build the retrieval pipeline configured for answer generation."""
 
-    retrieval_config = config.retrieval
-    chroma_retriever = None
-    if "chroma" in retrieval_config.components:
-        collection_name = resolve_collection_name(
-            chunks_path=retrieval_config.chunks_path,
-            model_name=retrieval_config.embedding_model,
-            collection_name=retrieval_config.collection_name,
-        )
-        chroma_retriever = ChromaRetriever(
-            persist_dir=retrieval_config.chroma_persist_dir,
-            collection_name=str(collection_name),
-            model_name=retrieval_config.embedding_model,
-        )
-
-    bm25_retriever = None
-    if "bm25" in retrieval_config.components:
-        bm25_retriever = BM25Retriever(index_dir=retrieval_config.bm25_index_dir)
-
-    reranker = (
-        CrossEncoderReranker(model_name=retrieval_config.reranker_model)
-        if retrieval_config.reranking_enabled
-        else None
-    )
-
-    return build_retrieval_pipeline(
-        component_names=retrieval_config.components,
-        chroma_retriever=chroma_retriever,
-        bm25_retriever=bm25_retriever,
-        aggregation_strategy_name=retrieval_config.aggregation_strategy,
-        component_weights=retrieval_config.component_weights,
-        reranker=reranker,
-    )
+    return build_retrieval_pipeline_from_config(config.retrieval)
 
 
 def resolve_generation_retrieval_options(
@@ -173,22 +127,4 @@ def resolve_generation_retrieval_options(
 ) -> GenerationRetrievalOptions:
     """Resolve YAML retrieval settings into request-time options."""
 
-    retrieval_config = config.retrieval
-    candidate_k = (
-        None
-        if not retrieval_config.reranking_enabled
-        else retrieval_config.candidate_k or retrieval_config.top_k * 5
-    )
-    topic_filter = (
-        retrieval_config.topic_filter_where
-        if retrieval_config.topic_filter_enabled
-        else None
-    )
-
-    return GenerationRetrievalOptions(
-        top_k=retrieval_config.top_k,
-        candidate_k=candidate_k,
-        metadata_filters=parse_metadata_filter_set(retrieval_config.metadata_filters),
-        metadata_filters_enabled=retrieval_config.metadata_filters_enabled,
-        topic_filter=topic_filter,
-    )
+    return resolve_retrieval_options(config.retrieval)

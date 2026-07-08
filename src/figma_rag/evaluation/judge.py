@@ -7,76 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from figma_rag.generation import GenerationModelConfig
+from figma_rag.generation import GenerationModelConfig, JudgeConfig
 
-# JUDGE_PROMPT = """
-# You are evaluating a RAG system.
-
-# Use only the retrieved context and the question.
-# Do not use outside knowledge.
-# Do not reward an answer for being factually correct if it is not supported by the retrieved context.
-
-# Scoring scale:
-# 1 = very poor
-# 2 = poor
-# 3 = acceptable but with important issues
-# 4 = good with minor issues
-# 5 = excellent
-
-# Definitions:
-
-# context_relevance:
-# Whether the retrieved context aligns with the user's query. Consider the relevance of the information to the query's intent and the appropriateness of the context in providing a coherent and useful response
-
-# groundedness:
-# How faithful the generated answer is to the retrieved context. Consider the factual accuracy and reliability of the answer, ensuring it is grounded in the retrieved information. Penalize passages of the answer that are not found in the retrieved context.
-
-
-# answer_relevance:
-# How well the generated answer addresses the user's original query. Consider the helpfulness and on-point nature of the answer, aligning with the user's intent and providing valuable insights.
-
-# """ 
-
-JUDGE_PROMPT = """
-You are evaluating a RAG system.
-
-Use only the retrieved context and the question.
-Do not use outside knowledge.
-Do not reward an answer for being factually correct if it is not supported by the retrieved context.
-
-Scoring scale:
-1 = very poor
-2 = poor
-3 = acceptable but with important issues
-4 = good with minor issues
-5 = excellent
-
-Definitions:
-
-context_relevance:
-Evaluate ONLY the retrieved context, not the generated answer.
-Question: Does the retrieved context contain information that is useful and sufficient for answering the user's question?
-Use the expected answer points to check whether the context contains the key information needed for a complete answer.
-Score lower if the context is off-topic, incomplete, too vague, missing key expected points, or contains mostly irrelevant material.
-Do not consider whether the generated answer used the context well.
-
-groundedness:
-Evaluate ONLY the generated answer against the retrieved context.
-Question: Are all factual claims in the generated answer directly supported by the retrieved context?
-Score lower for unsupported claims, contradictions, exaggerations, or details added beyond the retrieved context.
-Do not penalize the answer for omitting expected answer points.
-Do not use expected answer points as evidence that the answer is ungrounded.
-A missing expected point is an answer relevance issue, not a groundedness issue.
-Only penalize groundedness when the answer says something that is unsupported by, contradicted by, or stronger than the retrieved context.
-
-answer_relevance:
-Evaluate how well the generated answer addresses the user question.
-Question: Does the answer respond directly, completely, and helpfully to the user's question?
-Use the expected answer points to judge completeness.
-Score lower if the answer is incomplete, vague, evasive, overly broad, or misses important expected points that should have been included.
-Do not give credit for claims that are not supported by the retrieved context, even if they match the expected answer points.
-
-""" 
 
 class MetricScore(BaseModel):
     """One judge metric with a short explanation and a 1-to-5 score."""
@@ -114,7 +46,7 @@ class RAGEvaluation(BaseModel):
 class OpenAICompatibleStructuredJudge:
     """Run structured judge requests through an OpenAI-compatible API."""
 
-    def __init__(self, config: GenerationModelConfig) -> None:
+    def __init__(self, config: JudgeConfig) -> None:
         """Store model settings for repeated judge calls."""
 
         self.config = config
@@ -167,7 +99,7 @@ class OpenAICompatibleStructuredJudge:
 
 
 def build_structured_judge(
-    config: GenerationModelConfig,
+    config: JudgeConfig,
 ) -> OpenAICompatibleStructuredJudge:
     """Return the structured judge implementation for the configured provider."""
 
@@ -181,7 +113,7 @@ def build_structured_judge(
 
 def build_structured_request_options(
     messages: list[dict[str, str]],
-    config: GenerationModelConfig,
+    config: GenerationModelConfig | JudgeConfig,
     response_model: type[BaseModel],
 ) -> dict[str, Any]:
     """Build OpenAI-compatible chat options with JSON-schema response format."""
@@ -241,7 +173,10 @@ def copy_pydantic_model(model: BaseModel, update: dict[str, Any]) -> Any:
         return model.model_copy(update=update)
     return model.copy(update=update)
 
-def build_chat_prompt(payload):
+
+def build_chat_prompt(payload: dict[str, Any]) -> str:
+    """Build the user message containing all judge evaluation inputs."""
+
     retrieved_context = "\n".join(
         f"Chunk {chunk_rank + 1}:\n{chunk['text']}"
         for chunk_rank, chunk in enumerate(payload["retrieved_chunks"])

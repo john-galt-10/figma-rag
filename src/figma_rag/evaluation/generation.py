@@ -13,18 +13,18 @@ from figma_rag.generation import (
     AnswerGenerationConfig,
     AnswerGenerationPipeline,
     GenerationModelConfig,
+    JudgeConfig,
     build_answer_generation_pipeline,
 )
 from figma_rag.retrieval import RetrievalResult
 
 from .judge import (
-    JUDGE_PROMPT,
     OpenAICompatibleStructuredJudge,
     RAGEvaluation,
+    build_chat_prompt,
     build_structured_judge,
     copy_pydantic_model,
     pydantic_model_to_dict,
-    build_chat_prompt
 )
 from .rag_dataset import load_jsonl
 from .retrieval import RetrievalQueryExample, sha256_file
@@ -97,6 +97,7 @@ def run_generation_evaluation(
                 query_metadata=query_metadata.get(example.query_id, {}),
                 pipeline=pipeline,
                 judge=judge,
+                judge_config=config.judge,
                 max_chunk_chars=config.prompt.max_chunk_chars,
             )
         )
@@ -113,6 +114,7 @@ def evaluate_example(
     query_metadata: dict[str, Any],
     pipeline: AnswerGenerationPipeline,
     judge: OpenAICompatibleStructuredJudge,
+    judge_config: JudgeConfig,
     max_chunk_chars: int,
 ) -> GenerationEvaluationRow:
     """Run retrieval, answer generation, and judge evaluation for one query."""
@@ -154,6 +156,7 @@ def evaluate_example(
             answer=generated_answer,
             retrieved_chunks=retrieved_chunks,
             query_metadata=query_metadata,
+            system_prompt=judge_config.system_prompt,
         )
         judge_evaluation = judge.judge(judge_messages)
     except Exception as exc:
@@ -207,6 +210,7 @@ def build_judge_messages(
     answer: str,
     retrieved_chunks: list[RetrievedChunkRecord],
     query_metadata: dict[str, Any],
+    system_prompt: str,
 ) -> list[dict[str, str]]:
     """Build the judge prompt messages and include all evaluation inputs."""
 
@@ -222,7 +226,7 @@ def build_judge_messages(
     }
 
     return [
-        {"role": "system", "content": JUDGE_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": build_chat_prompt(payload)},
     ]
 
@@ -274,7 +278,9 @@ def build_generation_summary_payload(
     }
 
 
-def model_config_metadata(config: GenerationModelConfig) -> dict[str, Any]:
+def model_config_metadata(
+    config: GenerationModelConfig | JudgeConfig,
+) -> dict[str, Any]:
     """Return JSON-friendly metadata for one configured model request."""
 
     return {

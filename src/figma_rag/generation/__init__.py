@@ -3,6 +3,7 @@
 from .config import (
     AnswerGenerationConfig,
     GenerationModelConfig,
+    JudgeConfig,
     PromptConfig,
     RetrievalConfig,
     load_answer_generation_config,
@@ -24,6 +25,7 @@ __all__ = [
     "AnswerGenerationResult",
     "GenerationModelConfig",
     "GenerationRetrievalOptions",
+    "JudgeConfig",
     "ModelProvider",
     "OpenAICompatibleProvider",
     "PromptConfig",

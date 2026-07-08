@@ -11,6 +11,14 @@ from .aggregation import (
 )
 from .bm25 import BM25Retriever
 from .chroma import ChromaRetriever, RetrievalResult, resolve_collection_name
+from .config import (
+    RetrievalConfig,
+    RetrievalOptions,
+    build_configured_retrieval_pipeline,
+    load_retrieval_config,
+    parse_retrieval_config,
+    resolve_retrieval_options,
+)
 from .filters import MetadataFilter, MetadataFilterSet, parse_metadata_filter_set
 from .pipeline import (
     BM25RetrievalComponent,
@@ -48,6 +56,8 @@ __all__ = [
     "Reranker",
     "RerankingResult",
     "RetrievalComponent",
+    "RetrievalConfig",
+    "RetrievalOptions",
     "RetrievalPipeline",
     "RetrievalRequest",
     "RetrievalResult",
@@ -55,11 +65,15 @@ __all__ = [
     "WeightedReciprocalRankFusionStrategy",
     "aggregate_retrieval_results",
     "available_aggregation_strategies",
+    "build_configured_retrieval_pipeline",
     "build_retrieval_pipeline",
     "get_aggregation_strategy",
+    "load_retrieval_config",
     "normalize_component_weights",
     "parse_component_weights",
     "parse_metadata_filter_set",
+    "parse_retrieval_config",
     "resolve_candidate_k",
     "resolve_collection_name",
+    "resolve_retrieval_options",
 ]
