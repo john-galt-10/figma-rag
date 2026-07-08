@@ -15,20 +15,11 @@ if str(SRC_ROOT) not in sys.path:
 
 from figma_rag.generation import (  # noqa: E402
     AnswerGenerationConfig,
-    build_grounded_messages,
-    build_model_provider,
+    build_answer_generation_pipeline,
     load_answer_generation_config,
+    resolve_generation_retrieval_options,
 )
-from figma_rag.retrieval import (  # noqa: E402
-    BM25Retriever,
-    ChromaRetriever,
-    CrossEncoderReranker,
-    RetrievalRequest,
-    RetrievalResult,
-    build_retrieval_pipeline,
-    parse_metadata_filter_set,
-    resolve_collection_name,
-)
+from figma_rag.retrieval import RetrievalResult  # noqa: E402
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("generate_answer_config.yaml")
 
@@ -44,43 +35,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Question to answer using retrieved Figma documentation chunks.",
     )
     return parser
-
-
-def build_pipeline(config: AnswerGenerationConfig):
-    """Build the configured retrieval pipeline."""
-
-    retrieval_config = config.retrieval
-    chroma_retriever = None
-    if "chroma" in retrieval_config.components:
-        collection_name = resolve_collection_name(
-            chunks_path=retrieval_config.chunks_path,
-            model_name=retrieval_config.embedding_model,
-            collection_name=retrieval_config.collection_name,
-        )
-        chroma_retriever = ChromaRetriever(
-            persist_dir=retrieval_config.chroma_persist_dir,
-            collection_name=str(collection_name),
-            model_name=retrieval_config.embedding_model,
-        )
-
-    bm25_retriever = None
-    if "bm25" in retrieval_config.components:
-        bm25_retriever = BM25Retriever(index_dir=retrieval_config.bm25_index_dir)
-
-    reranker = (
-        CrossEncoderReranker(model_name=retrieval_config.reranker_model)
-        if retrieval_config.reranking_enabled
-        else None
-    )
-
-    return build_retrieval_pipeline(
-        component_names=retrieval_config.components,
-        chroma_retriever=chroma_retriever,
-        bm25_retriever=bm25_retriever,
-        aggregation_strategy_name=retrieval_config.aggregation_strategy,
-        component_weights=retrieval_config.component_weights,
-        reranker=reranker,
-    )
 
 
 def print_request_options(
@@ -179,32 +133,13 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_answer_generation_config(DEFAULT_CONFIG_PATH, REPO_ROOT)
-    retrieval_config = config.retrieval
-    metadata_filters = parse_metadata_filter_set(retrieval_config.metadata_filters)
-    candidate_k = (
-        None
-        if not retrieval_config.reranking_enabled
-        else retrieval_config.candidate_k or retrieval_config.top_k * 5
-    )
-    topic_filter = (
-        retrieval_config.topic_filter_where
-        if retrieval_config.topic_filter_enabled
-        else None
-    )
+    retrieval_options = resolve_generation_retrieval_options(config)
 
-    print_request_options(args.query, config, candidate_k)
+    print_request_options(args.query, config, retrieval_options.candidate_k)
 
-    pipeline = build_pipeline(config)
-    results = pipeline.retrieve(
-        RetrievalRequest(
-            query=args.query,
-            top_k=retrieval_config.top_k,
-            candidate_k=candidate_k,
-            metadata_filters=metadata_filters,
-            metadata_filters_enabled=retrieval_config.metadata_filters_enabled,
-            raw_chroma_where=topic_filter,
-        )
-    )
+    pipeline = build_answer_generation_pipeline(config)
+    generation_result = pipeline.generate(args.query)
+    results = generation_result.retrieved_chunks
 
     print(Fore.LIGHTBLACK_EX + "Retrieved chunks:" + Style.RESET_ALL)
     print()
@@ -213,11 +148,7 @@ def main() -> int:
 
     print_truncation_warning(results, config.prompt.max_chunk_chars)
 
-    messages = build_grounded_messages(args.query, results, config.prompt)
-    provider = build_model_provider(config.generation.provider)
-    answer = provider.generate(messages, config.generation)
-
-    print(answer)
+    print(generation_result.answer)
     return 0
 
 
