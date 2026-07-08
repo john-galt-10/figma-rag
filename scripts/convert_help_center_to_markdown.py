@@ -41,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+
+    print(f"Input manifest: {args.manifest_path}")
+    import pdb
+    pdb.set_trace()
     summary = convert_help_center_corpus(
         manifest_path=args.manifest_path,
         output_dir=args.output_dir,

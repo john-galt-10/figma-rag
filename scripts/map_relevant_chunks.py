@@ -19,7 +19,7 @@ DEFAULT_CHUNKS_PATH = (
     / "figma_docs"
     / "chunks_hierarchical_bge-small-en-v1.5_t320_o40_20260626-1212.jsonl"
 )
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "retrieval_test" / "relevant_chunks"
 CHUNKS_FILENAME_PATTERN = re.compile(
     r"^chunks_(?P<strategy>[^_]+)_(?P<model>.+?)_t\d+_o\d+_(?P<timestamp>\d{8}-\d{4})$"
 )

@@ -25,7 +25,7 @@ from figma_rag.retrieval import (
     resolve_retrieval_options,
 )
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("generate_answer_config.yaml")
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 
 
 def build_parser() -> argparse.ArgumentParser:

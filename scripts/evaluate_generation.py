@@ -36,9 +36,10 @@ DEFAULT_TEST_SET_PATH = (
     / "data"
     / "eval"
     / "retrieval_test"
-    / "golden_set_manual_and_codex_relevant_chunks_hierarchical_bge-small-en-v1.5_20260630-1601.jsonl"
+    / "relevant_chunks"
+    / "golden_set_relevant_chunks_hierarchical_bge-small-en-v1.5_t320_o40.jsonl"
 )
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("generate_answer_config.yaml")
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "data" / "eval" / "generation_test" / "test_results"
 
 

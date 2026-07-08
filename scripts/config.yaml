@@ -1,9 +1,9 @@
 retrieval:
   chunks_path: data\processed\figma_docs\chunks_hierarchical_bge-small-en-v1.5_t320_o40_20260630-1601.jsonl
-  chroma_persist_dir: data/processed/figma_docs/chroma
-  collection_name: hierarchical-bge-w-topic
+  chroma_persist_dir: data/processed/figma_docs/indexing/chroma
+  collection_name: hierarchical-bge
   embedding_model: BAAI/bge-small-en-v1.5
-  bm25_index_dir: data/processed/bm25/hierarchical_bge-small-en-v1.5_t320_o40_bm25_stemmed_english_20260701t1733
+  bm25_index_dir: data\processed\figma_docs\indexing\bm25\hierarchical-bge-stemmed-english
   top_k: 5
   candidate_k: 30
   reranking:
