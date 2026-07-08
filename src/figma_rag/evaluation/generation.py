@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -76,6 +77,7 @@ def run_generation_evaluation(
     examples: list[RetrievalQueryExample],
     config: AnswerGenerationConfig,
     test_set_path: Path,
+    delay_seconds: float = 0.0,
     settings_callback: Callable[[AnswerGenerationPipeline], None] | None = None,
     progress_callback: Callable[[int, int, RetrievalQueryExample], None] | None = None,
 ) -> GenerationEvaluationRun:
@@ -101,6 +103,8 @@ def run_generation_evaluation(
                 max_chunk_chars=config.prompt.max_chunk_chars,
             )
         )
+        if delay_seconds > 0 and index < len(examples):
+            time.sleep(delay_seconds)
 
     return GenerationEvaluationRun(
         rows=rows,

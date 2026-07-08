@@ -73,6 +73,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Evaluate only the first N examples from the test set.",
     )
     parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=0.0,
+        help="Sleep interval between evaluated samples.",
+    )
+    parser.add_argument(
         "--save-jsonl",
         action="store_true",
         help="Also write per-query records as newline-delimited JSON.",
@@ -88,6 +94,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be greater than zero")
+    if args.delay_seconds < 0:
+        parser.error("--delay-seconds must be zero or greater")
 
     ensure_parquet_available()
 
@@ -100,6 +108,7 @@ def main() -> int:
         examples=examples,
         config=config,
         test_set_path=args.test_set_path,
+        delay_seconds=args.delay_seconds,
         settings_callback=lambda pipeline: print_evaluation_settings(
             test_set_path=args.test_set_path,
             config_path=args.config_path,
